@@ -2,28 +2,28 @@
 triple:          'arm64-apple-darwin'
 binary-path:     awale_server
 relocations:
-  - { offset: 0x26, size: 0x8, addend: 0x0, symName: _init_awale, symObjAddr: 0x0, symBinAddr: 0x100001358, symSize: 0x134 }
-  - { offset: 0x41, size: 0x8, addend: 0x0, symName: _serialiser_jeu, symObjAddr: 0x640, symBinAddr: 0x100001998, symSize: 0x13C }
-  - { offset: 0x66, size: 0x8, addend: 0x0, symName: _serialiser_jeu.buffer, symObjAddr: 0x6229, symBinAddr: 0x100008080, symSize: 0x0 }
-  - { offset: 0xC1, size: 0x8, addend: 0x0, symName: _nb_clients, symObjAddr: 0x632C, symBinAddr: 0x100008180, symSize: 0x0 }
-  - { offset: 0xDD, size: 0x8, addend: 0x0, symName: _nb_games, symObjAddr: 0x6330, symBinAddr: 0x100008184, symSize: 0x0 }
-  - { offset: 0xF2, size: 0x8, addend: 0x0, symName: _clients_mutex, symObjAddr: 0x2678, symBinAddr: 0x100008000, symSize: 0x0 }
-  - { offset: 0x151, size: 0x8, addend: 0x0, symName: _games_mutex, symObjAddr: 0x26B8, symBinAddr: 0x100008040, symSize: 0x0 }
+  - { offset: 0x26, size: 0x8, addend: 0x0, symName: _init_awale, symObjAddr: 0x0, symBinAddr: 0x100001380, symSize: 0x134 }
+  - { offset: 0x41, size: 0x8, addend: 0x0, symName: _serialiser_jeu, symObjAddr: 0x640, symBinAddr: 0x1000019C0, symSize: 0x13C }
+  - { offset: 0x66, size: 0x8, addend: 0x0, symName: _serialiser_jeu.buffer, symObjAddr: 0x6200, symBinAddr: 0x100008080, symSize: 0x0 }
+  - { offset: 0xC1, size: 0x8, addend: 0x0, symName: _nb_clients, symObjAddr: 0x6300, symBinAddr: 0x100008180, symSize: 0x0 }
+  - { offset: 0xDD, size: 0x8, addend: 0x0, symName: _nb_games, symObjAddr: 0x6304, symBinAddr: 0x100008184, symSize: 0x0 }
+  - { offset: 0xF2, size: 0x8, addend: 0x0, symName: _clients_mutex, symObjAddr: 0x2650, symBinAddr: 0x100008000, symSize: 0x0 }
+  - { offset: 0x151, size: 0x8, addend: 0x0, symName: _games_mutex, symObjAddr: 0x2690, symBinAddr: 0x100008040, symSize: 0x0 }
   - { offset: 0x172, size: 0x8, addend: 0x0, symName: _clients, symBinAddr: 0x100008188, symSize: 0x0 }
   - { offset: 0x1DF, size: 0x8, addend: 0x0, symName: _games, symBinAddr: 0x100008E08, symSize: 0x0 }
-  - { offset: 0x321, size: 0x8, addend: 0x0, symName: _init_awale, symObjAddr: 0x0, symBinAddr: 0x100001358, symSize: 0x134 }
-  - { offset: 0x37D, size: 0x8, addend: 0x0, symName: _coup_valide, symObjAddr: 0x134, symBinAddr: 0x10000148C, symSize: 0xA8 }
-  - { offset: 0x3C1, size: 0x8, addend: 0x0, symName: _est_en_famine, symObjAddr: 0x1DC, symBinAddr: 0x100001534, symSize: 0xA0 }
-  - { offset: 0x42F, size: 0x8, addend: 0x0, symName: _capturer_graines, symObjAddr: 0x27C, symBinAddr: 0x1000015D4, symSize: 0x198 }
-  - { offset: 0x46F, size: 0x8, addend: 0x0, symName: _jouer_coup, symObjAddr: 0x414, symBinAddr: 0x10000176C, symSize: 0x22C }
-  - { offset: 0x4CF, size: 0x8, addend: 0x0, symName: _deserialiser_jeu, symObjAddr: 0x77C, symBinAddr: 0x100001AD4, symSize: 0x458 }
-  - { offset: 0x571, size: 0x8, addend: 0x0, symName: _afficher_plateau, symObjAddr: 0xBD4, symBinAddr: 0x100001F2C, symSize: 0x280 }
-  - { offset: 0x613, size: 0x8, addend: 0x0, symName: _broadcast_game_state, symObjAddr: 0xE54, symBinAddr: 0x1000021AC, symSize: 0x140 }
-  - { offset: 0x66F, size: 0x8, addend: 0x0, symName: _send_free_players, symObjAddr: 0xF94, symBinAddr: 0x1000022EC, symSize: 0x144 }
-  - { offset: 0x6BD, size: 0x8, addend: 0x0, symName: _send_message, symObjAddr: 0x10D8, symBinAddr: 0x100002430, symSize: 0x318 }
-  - { offset: 0x7BE, size: 0x8, addend: 0x0, symName: _send_active_games, symObjAddr: 0x13F0, symBinAddr: 0x100002748, symSize: 0x1A8 }
-  - { offset: 0x82B, size: 0x8, addend: 0x0, symName: _init_game, symObjAddr: 0x1598, symBinAddr: 0x1000028F0, symSize: 0xAC }
-  - { offset: 0x887, size: 0x8, addend: 0x0, symName: _handle_client, symObjAddr: 0x1644, symBinAddr: 0x10000299C, symSize: 0xB4C }
-  - { offset: 0xB19, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x2190, symBinAddr: 0x1000034E8, symSize: 0x1AC }
-  - { offset: 0xBBA, size: 0x8, addend: 0x0, symName: __OSSwapInt16, symObjAddr: 0x233C, symBinAddr: 0x100003694, symSize: 0x24 }
+  - { offset: 0x321, size: 0x8, addend: 0x0, symName: _init_awale, symObjAddr: 0x0, symBinAddr: 0x100001380, symSize: 0x134 }
+  - { offset: 0x37D, size: 0x8, addend: 0x0, symName: _coup_valide, symObjAddr: 0x134, symBinAddr: 0x1000014B4, symSize: 0xA8 }
+  - { offset: 0x3C1, size: 0x8, addend: 0x0, symName: _est_en_famine, symObjAddr: 0x1DC, symBinAddr: 0x10000155C, symSize: 0xA0 }
+  - { offset: 0x42F, size: 0x8, addend: 0x0, symName: _capturer_graines, symObjAddr: 0x27C, symBinAddr: 0x1000015FC, symSize: 0x198 }
+  - { offset: 0x46F, size: 0x8, addend: 0x0, symName: _jouer_coup, symObjAddr: 0x414, symBinAddr: 0x100001794, symSize: 0x22C }
+  - { offset: 0x4CF, size: 0x8, addend: 0x0, symName: _deserialiser_jeu, symObjAddr: 0x77C, symBinAddr: 0x100001AFC, symSize: 0x458 }
+  - { offset: 0x571, size: 0x8, addend: 0x0, symName: _afficher_plateau, symObjAddr: 0xBD4, symBinAddr: 0x100001F54, symSize: 0x280 }
+  - { offset: 0x613, size: 0x8, addend: 0x0, symName: _broadcast_game_state, symObjAddr: 0xE54, symBinAddr: 0x1000021D4, symSize: 0x140 }
+  - { offset: 0x66F, size: 0x8, addend: 0x0, symName: _send_free_players, symObjAddr: 0xF94, symBinAddr: 0x100002314, symSize: 0x144 }
+  - { offset: 0x6BD, size: 0x8, addend: 0x0, symName: _send_message, symObjAddr: 0x10D8, symBinAddr: 0x100002458, symSize: 0x334 }
+  - { offset: 0x7CD, size: 0x8, addend: 0x0, symName: _send_active_games, symObjAddr: 0x140C, symBinAddr: 0x10000278C, symSize: 0x1A8 }
+  - { offset: 0x83A, size: 0x8, addend: 0x0, symName: _init_game, symObjAddr: 0x15B4, symBinAddr: 0x100002934, symSize: 0xAC }
+  - { offset: 0x896, size: 0x8, addend: 0x0, symName: _handle_client, symObjAddr: 0x1660, symBinAddr: 0x1000029E0, symSize: 0xB50 }
+  - { offset: 0xB29, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x21B0, symBinAddr: 0x100003530, symSize: 0x1AC }
+  - { offset: 0xBCA, size: 0x8, addend: 0x0, symName: __OSSwapInt16, symObjAddr: 0x235C, symBinAddr: 0x1000036DC, symSize: 0x24 }
 ...

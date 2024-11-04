@@ -20,7 +20,7 @@ void print_help() {
   printf("/games - Liste des parties en cours\n");
   printf("/challenge <pseudo> - Défier un joueur\n");
   printf("/observe <game_id> - Observer une partie\n");
-  printf("/message <pseudo> <message> - Envoyer un message\n");
+  printf("/message <pseudo || all> <message> - Envoyer un message\n");
   printf("/quit - Quitter le jeu\n");
   printf("1-6 - Jouer un coup (pendant une partie)\n\n");
 }
@@ -252,10 +252,9 @@ int main(int argc, char **argv) {
 
       // Verifier qu'il y a un pseudo et un message
       if (sscanf(buffer, "/message %s %[^\n]", pseudo, message) == 2) {
-        printf("j'envoie un message\n");
         snprintf(buffer, BUFFER_SIZE, "MESSAGE %s %s", pseudo, message);
-        printf("j'envoie : %s\n", buffer);
         write(socket_fd, buffer, strlen(buffer));
+        memset(buffer, 0, BUFFER_SIZE);
       } else {
         printf("Usage: /message <pseudo> <message>\n");
       }

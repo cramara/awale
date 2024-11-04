@@ -101,20 +101,26 @@ void send_message(int socket, char *buffer) {
 
   // Trouver le socket du destinataire et envoyer le message
   int destinataireTrouve = 0;
-  printf("Avant for\n");
+  // Vérifier si le message est pour tous les clients (destinataire = "all")
+  int allClients = (strcmp(destinataire, "all") == 0);
+
   for (int i = 0; i < nb_clients; i++) {
-    if (strcmp(clients[i].pseudo, destinataire) == 0) {
+    if (strcmp(clients[i].pseudo, destinataire) == 0 || allClients) {
+
       // Formater le message avec le pseudo de l'expéditeur
       char formatted_message[BUFFER_SIZE];
       snprintf(formatted_message, BUFFER_SIZE,
                "MESSAGE message de %s%s%s: %s\n", GREEN_TEXT, expediteur,
                RESET_COLOR, message);
-      printf("je suis dans le for\n");
-      printf("message :%s", formatted_message);
+
       // Envoyer le message (ecrire le message chez le destinataire)
       write(clients[i].socket, formatted_message, strlen(formatted_message));
       destinataireTrouve = 1;
-      break;
+
+      // On sort de la boucle si le destinataire est trouvé et que le message
+      // n'est pas pour tous
+      if (!allClients)
+        break;
     }
   }
   pthread_mutex_unlock(&clients_mutex);
@@ -291,8 +297,8 @@ void *handle_client(void *arg) {
       }
       pthread_mutex_unlock(&games_mutex);
     } else if (strncmp(buffer, "MESSAGE", 7) == 0) {
-      printf("avant l'appel de send_message\n");
       send_message(socket, buffer);
+      memset(buffer, 0, BUFFER_SIZE);
     } else if (strncmp(buffer, "MOVE", 4) == 0) {
       int move;
       sscanf(buffer, "MOVE %d", &move);
@@ -312,7 +318,7 @@ void *handle_client(void *arg) {
         Game *game = &games[game_id];
 
         // Vérifier si c'est le bon joueur
-        int player_num = (socket == game->socket1) ? 1 : 2;
+        unsigned int player_num = (socket == game->socket1) ? 1 : 2;
         if (player_num == game->jeu.joueurCourant) {
           // Jouer le coup avec awale_v2.c
           if (jouer_coup(&game->jeu, move)) {
