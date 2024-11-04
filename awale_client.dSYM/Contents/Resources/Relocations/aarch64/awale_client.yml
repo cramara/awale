@@ -2,19 +2,25 @@
 triple:          'arm64-apple-darwin'
 binary-path:     awale_client
 relocations:
-  - { offset: 0x26, size: 0x8, addend: 0x0, symName: _init_awale, symObjAddr: 0x0, symBinAddr: 0x100001824, symSize: 0x134 }
-  - { offset: 0x41, size: 0x8, addend: 0x0, symName: _serialiser_jeu, symObjAddr: 0x640, symBinAddr: 0x100001E64, symSize: 0x13C }
-  - { offset: 0x66, size: 0x8, addend: 0x0, symName: _serialiser_jeu.buffer, symObjAddr: 0x54B7, symBinAddr: 0x100008000, symSize: 0x0 }
-  - { offset: 0xCD, size: 0x8, addend: 0x0, symName: _games, symBinAddr: 0x100008100, symSize: 0x0 }
-  - { offset: 0x215, size: 0x8, addend: 0x0, symName: _init_awale, symObjAddr: 0x0, symBinAddr: 0x100001824, symSize: 0x134 }
-  - { offset: 0x271, size: 0x8, addend: 0x0, symName: _coup_valide, symObjAddr: 0x134, symBinAddr: 0x100001958, symSize: 0xA8 }
-  - { offset: 0x2B5, size: 0x8, addend: 0x0, symName: _est_en_famine, symObjAddr: 0x1DC, symBinAddr: 0x100001A00, symSize: 0xA0 }
-  - { offset: 0x323, size: 0x8, addend: 0x0, symName: _capturer_graines, symObjAddr: 0x27C, symBinAddr: 0x100001AA0, symSize: 0x198 }
-  - { offset: 0x363, size: 0x8, addend: 0x0, symName: _jouer_coup, symObjAddr: 0x414, symBinAddr: 0x100001C38, symSize: 0x22C }
-  - { offset: 0x3C3, size: 0x8, addend: 0x0, symName: _deserialiser_jeu, symObjAddr: 0x77C, symBinAddr: 0x100001FA0, symSize: 0x458 }
-  - { offset: 0x465, size: 0x8, addend: 0x0, symName: _afficher_plateau, symObjAddr: 0xBD4, symBinAddr: 0x1000023F8, symSize: 0x280 }
-  - { offset: 0x507, size: 0x8, addend: 0x0, symName: _print_help, symObjAddr: 0xE54, symBinAddr: 0x100002678, symSize: 0x70 }
-  - { offset: 0x51C, size: 0x8, addend: 0x0, symName: _receive_messages, symObjAddr: 0xEC4, symBinAddr: 0x1000026E8, symSize: 0x494 }
-  - { offset: 0x5D8, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x1358, symBinAddr: 0x100002B7C, symSize: 0xAD0 }
-  - { offset: 0x719, size: 0x8, addend: 0x0, symName: __OSSwapInt16, symObjAddr: 0x1E28, symBinAddr: 0x10000364C, symSize: 0x24 }
+  - { offset: 0x26, size: 0x8, addend: 0x0, symName: _init_awale, symObjAddr: 0x0, symBinAddr: 0x1000017AC, symSize: 0x134 }
+  - { offset: 0x41, size: 0x8, addend: 0x0, symName: _serialiser_jeu, symObjAddr: 0x640, symBinAddr: 0x100001DEC, symSize: 0x13C }
+  - { offset: 0x66, size: 0x8, addend: 0x0, symName: _serialiser_jeu.buffer, symObjAddr: 0x57F9, symBinAddr: 0x100008000, symSize: 0x0 }
+  - { offset: 0xCD, size: 0x8, addend: 0x0, symName: _parties, symBinAddr: 0x100008100, symSize: 0x0 }
+  - { offset: 0x215, size: 0x8, addend: 0x0, symName: _init_awale, symObjAddr: 0x0, symBinAddr: 0x1000017AC, symSize: 0x134 }
+  - { offset: 0x271, size: 0x8, addend: 0x0, symName: _coup_valide, symObjAddr: 0x134, symBinAddr: 0x1000018E0, symSize: 0xA8 }
+  - { offset: 0x2B5, size: 0x8, addend: 0x0, symName: _est_en_famine, symObjAddr: 0x1DC, symBinAddr: 0x100001988, symSize: 0xA0 }
+  - { offset: 0x323, size: 0x8, addend: 0x0, symName: _capturer_graines, symObjAddr: 0x27C, symBinAddr: 0x100001A28, symSize: 0x198 }
+  - { offset: 0x363, size: 0x8, addend: 0x0, symName: _jouer_coup, symObjAddr: 0x414, symBinAddr: 0x100001BC0, symSize: 0x22C }
+  - { offset: 0x3C3, size: 0x8, addend: 0x0, symName: _deserialiser_jeu, symObjAddr: 0x77C, symBinAddr: 0x100001F28, symSize: 0x458 }
+  - { offset: 0x465, size: 0x8, addend: 0x0, symName: _afficher_plateau, symObjAddr: 0xBD4, symBinAddr: 0x100002380, symSize: 0x280 }
+  - { offset: 0x507, size: 0x8, addend: 0x0, symName: _afficher_aide, symObjAddr: 0xE54, symBinAddr: 0x100002600, symSize: 0x70 }
+  - { offset: 0x51C, size: 0x8, addend: 0x0, symName: _recevoir_messages, symObjAddr: 0xEC4, symBinAddr: 0x100002670, symSize: 0x494 }
+  - { offset: 0x5D8, size: 0x8, addend: 0x0, symName: _envoyer_commande_simple, symObjAddr: 0x1358, symBinAddr: 0x100002B04, symSize: 0x48 }
+  - { offset: 0x60A, size: 0x8, addend: 0x0, symName: _gerer_defi, symObjAddr: 0x13A0, symBinAddr: 0x100002B4C, symSize: 0x110 }
+  - { offset: 0x64A, size: 0x8, addend: 0x0, symName: _gerer_acceptation, symObjAddr: 0x14B0, symBinAddr: 0x100002C5C, symSize: 0x100 }
+  - { offset: 0x68A, size: 0x8, addend: 0x0, symName: _gerer_observation, symObjAddr: 0x15B0, symBinAddr: 0x100002D5C, symSize: 0xB4 }
+  - { offset: 0x6CA, size: 0x8, addend: 0x0, symName: _gerer_message, symObjAddr: 0x1664, symBinAddr: 0x100002E10, symSize: 0xE0 }
+  - { offset: 0x719, size: 0x8, addend: 0x0, symName: _gerer_coup, symObjAddr: 0x1744, symBinAddr: 0x100002EF0, symSize: 0xA0 }
+  - { offset: 0x767, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x17E4, symBinAddr: 0x100002F90, symSize: 0x698 }
+  - { offset: 0x807, size: 0x8, addend: 0x0, symName: __OSSwapInt16, symObjAddr: 0x1E7C, symBinAddr: 0x100003628, symSize: 0x24 }
 ...
