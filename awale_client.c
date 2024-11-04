@@ -65,17 +65,17 @@ void *receive_messages(void *arg) {
                 strncpy(data->jeu.pseudo2, player2, MAX_PSEUDO_LENGTH - 1);
                 data->jeu.pseudo2[MAX_PSEUDO_LENGTH - 1] = '\0';
                 // Chercher les noms des joueurs avant GAMESTATE
-                // if(sscanf(buffer, "%*s %s %s", player1, player2) == 2) {
-                //     printf("Joueurs détectés: %s vs %s\n", player1, player2);  // Debug
-                //     if(strcmp(data->pseudo, player1) == 0) {
-                //         data->player_num = 1;
-                //     } else if(strcmp(data->pseudo, player2) == 0) {
-                //         data->player_num = 2;
-                //     } else {
-                //         data->player_num = 3; // Observateur
-                //     }
-                //     printf("Numéro de joueur assigné: %d\n", data->player_num);  // Debug
-                // }
+                if(sscanf(buffer, "GAMESTATE %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %s %s", player1, player2) == 2) {
+                    printf("Joueurs détectés: %s vs %s\n", player1, player2);  // Debug
+                    if(strcmp(data->pseudo, player1) == 0) {
+                        data->player_num = 1;
+                    } else if(strcmp(data->pseudo, player2) == 0) {
+                        data->player_num = 2;
+                    } else {
+                        data->player_num = 3; // Observateur
+                    }
+                    printf("Numéro de joueur assigné: %d\n", data->player_num);  // Debug
+                }
             }
             
             deserialiser_jeu(&data->jeu, gamestate_pos);
@@ -200,7 +200,6 @@ int main(int argc, char** argv) {
         if(strcmp(buffer, "/help") == 0) {
             print_help();
         }
-        // awale_client.c (continuation)
         else if(strcmp(buffer, "/list") == 0) {
             write(socket_fd, "LIST", 4);
         }

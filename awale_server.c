@@ -48,8 +48,7 @@ void broadcast_game_state(Game *game) {
     char *game_state = serialiser_jeu(&game->jeu);
     
     // Créer le message complet avec les pseudos des joueurs
-    // snprintf(full_state, BUFFER_SIZE, "GAMESTATE %s %s%s", 
-    //            game->player1, game->player2,  game_state);
+    snprintf(full_state, BUFFER_SIZE, "GAMESTATE%s", game_state);
     
     // Envoyer aux joueurs
     write(game->socket1, full_state, strlen(full_state));

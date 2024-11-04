@@ -5,6 +5,7 @@
 
 #define RESET_COLOR "\033[0m"
 #define GREEN_TEXT "\033[32m"
+#define MAX_PSEUDO_LENGTH 50
 
 typedef struct {
     unsigned int plateau[12];      // les trous du plateau (0-5 pour J1 et 6-11 pour J2)
@@ -36,6 +37,11 @@ void init_awale(Awale *jeu, char *pseudo1, char *pseudo2) {
     jeu->gagnant = 0;
     strcpy(jeu->pseudo1, pseudo1);
     strcpy(jeu->pseudo2, pseudo2);
+    printf("pseudo1  : %s\n",pseudo1);
+    printf("pseudo2  : %s\n",pseudo2);
+    printf("joueur1  : %s\n",jeu->pseudo1);
+    printf("joueur2  : %s\n",jeu->pseudo2);
+    
 }
 
 // Vérifie si un coup est valide
@@ -172,12 +178,26 @@ void deserialiser_jeu(Awale *jeu, const char *buffer) {
     while(*ptr && *ptr != ' ') ptr++;
     ptr++;
 
-    strcpy(jeu->pseudo1, ptr);
+     // Copier le premier pseudo jusqu'au premier espace
+    const char *espace = memchr(ptr, ' ', MAX_PSEUDO_LENGTH);
+    if (espace != NULL) {
+        size_t len = espace - ptr;
+        memcpy(jeu->pseudo1, ptr, len);
+        jeu->pseudo1[len] = '\0';
+        ptr = espace + 1;
+    }
     
-    while(*ptr && *ptr != ' ') ptr++;
-    ptr++;
-
-    strcpy(jeu->pseudo2, ptr);
+    // Pour le deuxième pseudo, aller jusqu'au prochain espace
+    espace = memchr(ptr, ' ', MAX_PSEUDO_LENGTH);
+    if (espace != NULL) {
+        size_t len = espace - ptr;
+        memcpy(jeu->pseudo2, ptr, len);
+        jeu->pseudo2[len] = '\0';
+        ptr = espace + 1;
+    } else {
+        // Si pas d'espace trouvé, c'est la fin du buffer
+        strcpy(jeu->pseudo2, ptr);
+    }
 }
 
 // Affiche le plateau
