@@ -6,7 +6,7 @@ CLIENT = awale_client
 CC = gcc
 
 # Options de compilation
-CFLAGS = -Wall -Wextra -std=c11 -pthread
+CFLAGS = -Wall -Wextra -std=c11 -pthread -g
 
 # Fichiers sources
 SERVER_SRC = awale_server.c
