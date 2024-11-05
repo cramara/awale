@@ -1,274 +1,283 @@
-// awale_client.c
+#include "awale_v2.c"
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
-#include <sys/types.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
+#include <sys/types.h>
 #include <unistd.h>
-#include <pthread.h>
-#include "awale_v2.c"
 
-#define BUFFER_SIZE 1024
-#define MAX_PSEUDO_LENGTH 50
-#define MAX_GAMES 25
+#define TAILLE_BUFFER 1024
+#define TAILLE_MAX_PSEUDO 50
+#define MAX_PARTIES 25
 
-void print_help() {
+void afficher_aide() {
     printf("\nCommandes disponibles:\n");
     printf("/list - Liste des joueurs disponibles\n");
     printf("/games - Liste des parties en cours\n");
     printf("/challenge <pseudo> - Défier un joueur\n");
-    printf("/observe <game_id> - Observer une partie\n");
+    printf("/observe <id_partie> - Observer une partie\n");
+    printf("/message <pseudo || all> <message> - Envoyer un message\n");
     printf("/quit - Quitter le jeu\n");
     printf("1-6 - Jouer un coup (pendant une partie)\n\n");
 }
 
 typedef struct {
-    char player1[MAX_PSEUDO_LENGTH];
-    char player2[MAX_PSEUDO_LENGTH];
-} GameInfo;
+    char joueur1[TAILLE_MAX_PSEUDO];
+    char joueur2[TAILLE_MAX_PSEUDO];
+} InfoPartie;
 
-GameInfo games[MAX_GAMES];
+InfoPartie parties[MAX_PARTIES];
 
-
-// Structure pour les données partagées
 typedef struct {
     int socket;
-    int player_num;
-    char pseudo[MAX_PSEUDO_LENGTH];
+    unsigned int numero_joueur;
+    char pseudo[TAILLE_MAX_PSEUDO];
     Awale jeu;
-} ClientData;
+} DonneesClient;
 
+void *recevoir_messages(void *arg) {
+    DonneesClient *donnees = (DonneesClient *)arg;
+    char buffer[TAILLE_BUFFER];
 
-void *receive_messages(void *arg) {
-    ClientData *data = (ClientData*)arg;
-    char buffer[BUFFER_SIZE];
-
-    while(1) {
-        memset(buffer, 0, BUFFER_SIZE);
-        int n = read(data->socket, buffer, BUFFER_SIZE);
-        if(n <= 0) break;
+    while (1) {
+        memset(buffer, 0, TAILLE_BUFFER);
+        int n = read(donnees->socket, buffer, TAILLE_BUFFER);
+        if (n <= 0) break;
         buffer[n] = 0;
 
-        // Vérifier d'abord si le message contient "GAMESTATE" n'importe où dans la chaîne
-        char *gamestate_pos = strstr(buffer, "GAMESTATE");
-        if(gamestate_pos != NULL) {
-            printf("Message reçu contenant GAMESTATE: %s\n", buffer);  // Debug
-            
-            // Si c'est le premier état de jeu reçu et que player_num n'est pas encore défini
-            if(data->player_num == 0) {
-                char player1[MAX_PSEUDO_LENGTH];
-                char player2[MAX_PSEUDO_LENGTH];
-                strncpy(data->jeu.pseudo1, player1, MAX_PSEUDO_LENGTH - 1);
-                data->jeu.pseudo1[MAX_PSEUDO_LENGTH - 1] = '\0';
-                strncpy(data->jeu.pseudo2, player2, MAX_PSEUDO_LENGTH - 1);
-                data->jeu.pseudo2[MAX_PSEUDO_LENGTH - 1] = '\0';
-                // Chercher les noms des joueurs avant GAMESTATE
-                if(sscanf(buffer, "GAMESTATE %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %s %s", player1, player2) == 2) {
-                    printf("Joueurs détectés: %s vs %s\n", player1, player2);  // Debug
-                    if(strcmp(data->pseudo, player1) == 0) {
-                        data->player_num = 1;
-                    } else if(strcmp(data->pseudo, player2) == 0) {
-                        data->player_num = 2;
+        char *pos_etat_jeu = strstr(buffer, "GAMESTATE");
+        if (pos_etat_jeu != NULL) {
+            printf("Message reçu contenant GAMESTATE: %s\n", buffer);
+
+            if (donnees->numero_joueur == 0) {
+                char joueur1[TAILLE_MAX_PSEUDO];
+                char joueur2[TAILLE_MAX_PSEUDO];
+                strncpy(donnees->jeu.pseudo1, joueur1, TAILLE_MAX_PSEUDO - 1);
+                donnees->jeu.pseudo1[TAILLE_MAX_PSEUDO - 1] = '\0';
+                strncpy(donnees->jeu.pseudo2, joueur2, TAILLE_MAX_PSEUDO - 1);
+                donnees->jeu.pseudo2[TAILLE_MAX_PSEUDO - 1] = '\0';
+
+                if (sscanf(buffer, "GAMESTATE %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %s %s",
+                          joueur1, joueur2) == 2) {
+                    printf("Joueurs détectés: %s vs %s\n", joueur1, joueur2);
+                    if (strcmp(donnees->pseudo, joueur1) == 0) {
+                        donnees->numero_joueur = 1;
+                    } else if (strcmp(donnees->pseudo, joueur2) == 0) {
+                        donnees->numero_joueur = 2;
                     } else {
-                        data->player_num = 3; // Observateur
+                        donnees->numero_joueur = 3;
                     }
-                    printf("Numéro de joueur assigné: %d\n", data->player_num);  // Debug
+                    printf("Numéro de joueur assigné: %d\n", donnees->numero_joueur);
                 }
             }
-            
-            deserialiser_jeu(&data->jeu, gamestate_pos);
-            //system("clear");
-            
-            // Afficher le plateau avec la bonne perspective
 
+            deserialiser_jeu(&donnees->jeu, pos_etat_jeu);
+            afficher_plateau(&donnees->jeu, donnees->numero_joueur);
 
-            afficher_plateau(&data->jeu, data->player_num);
-            
-            if(data->jeu.fini) {
-                if(data->jeu.gagnant == data->player_num) {
+            if (donnees->jeu.fini) {
+                if (donnees->jeu.gagnant == donnees->numero_joueur) {
                     printf("\nFélicitations ! Vous avez gagné !\n");
-                } else if(data->jeu.gagnant > 0) {
+                } else if (donnees->jeu.gagnant > 0) {
                     printf("\nVous avez perdu.\n");
                 } else {
                     printf("\nMatch nul !\n");
                 }
-            } else if(data->jeu.joueurCourant == data->player_num) {
+            } else if (donnees->jeu.joueurCourant == donnees->numero_joueur) {
                 printf("\nC'est votre tour ! Choisissez un trou (1-6):\n");
             } else {
                 printf("\nEn attente du coup de l'adversaire...\n");
             }
-        }
-        else if(strncmp(buffer, "PLAYERS", 7) == 0) {
+        } else if (strncmp(buffer, "PLAYERS", 7) == 0) {
             printf("\nJoueurs disponibles:\n%s\n", buffer + 8);
-        }
-        else if(strncmp(buffer, "GAMES", 5) == 0) {
+        } else if (strncmp(buffer, "GAMES", 5) == 0) {
             printf("\nParties en cours:\n%s\n", buffer + 6);
-        }
-        else if(strncmp(buffer, "CHALLENGE_FROM", 13) == 0) {
-            char challenger[MAX_PSEUDO_LENGTH];
-            sscanf(buffer, "CHALLENGE_FROM %s", challenger);
-            printf("\nDéfi reçu de %s! Tapez '/accept %s' pour accepter\n", challenger, challenger);
+        } else if (strncmp(buffer, "CHALLENGE_FROM", 13) == 0) {
+            char adversaire[TAILLE_MAX_PSEUDO];
+            sscanf(buffer, "CHALLENGE_FROM %s", adversaire);
+            printf("\nDéfi reçu de %s! Tapez '/accept %s' pour accepter\n", adversaire, adversaire);
+        } else if (strncmp(buffer, "MESSAGE", 7) == 0) {
+            printf("\n%s", buffer + 7);
         }
     }
     return NULL;
 }
 
-int main(int argc, char** argv) {
-    if(argc != 3) {
-        printf("Usage: %s server_ip port\n", argv[0]);
+void envoyer_commande_simple(int socket_fd, const char* commande) {
+    write(socket_fd, commande, strlen(commande));
+}
+
+void gerer_defi(int socket_fd, char* buffer) {
+    char adversaire[TAILLE_MAX_PSEUDO];
+    if (sscanf(buffer, "/challenge %s", adversaire) == 1 || 
+        sscanf(buffer, "/c %s", adversaire) == 1) {
+        snprintf(buffer, TAILLE_BUFFER, "CHALLENGE %s", adversaire);
+        envoyer_commande_simple(socket_fd, buffer);
+        printf("Défi envoyé à %s\n", adversaire);
+    } else {
+        printf("Usage: /challenge <pseudo>\n");
+    }
+}
+
+void gerer_acceptation(int socket_fd, char* buffer) {
+    char adversaire[TAILLE_MAX_PSEUDO];
+    if (sscanf(buffer, "/accept %s", adversaire) == 1 || 
+        sscanf(buffer, "/a %s", adversaire) == 1) {
+        snprintf(buffer, TAILLE_BUFFER, "ACCEPT %s", adversaire);
+        envoyer_commande_simple(socket_fd, buffer);
+        printf("Défi accepté! La partie va commencer...\n");
+    } else {
+        printf("Usage: /accept <pseudo>\n");
+    }
+}
+
+void gerer_observation(int socket_fd, char* buffer) {
+    int id_partie;
+    if (sscanf(buffer, "/observe %d", &id_partie) == 1) {
+        snprintf(buffer, TAILLE_BUFFER, "OBSERVE %d", id_partie);
+        envoyer_commande_simple(socket_fd, buffer);
+        printf("Mode observation activé pour la partie %d\n", id_partie);
+    } else {
+        printf("Usage: /observe <id_partie>\n");
+    }
+}
+
+void gerer_message(int socket_fd, char* buffer) {
+    char pseudo[TAILLE_MAX_PSEUDO];
+    char message[TAILLE_BUFFER];
+    
+    if (sscanf(buffer, "/message %s %[^\n]", pseudo, message) == 2) {
+        snprintf(buffer, TAILLE_BUFFER, "MESSAGE %s %s", pseudo, message);
+        envoyer_commande_simple(socket_fd, buffer);
+    } else {
+        printf("Usage: /message <pseudo> <message>\n");
+    }
+}
+
+void gerer_coup(int socket_fd, char* buffer, DonneesClient* donnees) {
+    int coup = buffer[0] - '0';
+    if (coup_valide(&donnees->jeu, coup)) {
+        snprintf(buffer, TAILLE_BUFFER, "MOVE %d", coup);
+        envoyer_commande_simple(socket_fd, buffer);
+    } else {
+        printf("Coup invalide, choisissez une case entre 1 et 6 contenant des graines\n");
+    }
+}
+
+int main(int argc, char **argv) {
+    if (argc != 3) {
+        printf("Usage: %s ip_serveur port\n", argv[0]);
         return 1;
     }
 
-    int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if(socket_fd < 0) {
-        perror("Socket creation failed");
+    int descripteur_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (descripteur_socket < 0) {
+        perror("Échec de création de la socket");
         return 1;
     }
 
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = inet_addr(argv[1]);
-    server_addr.sin_port = htons(atoi(argv[2]));
+    struct sockaddr_in adresse_serveur;
+    memset(&adresse_serveur, 0, sizeof(adresse_serveur));
+    adresse_serveur.sin_family = AF_INET;
+    adresse_serveur.sin_addr.s_addr = inet_addr(argv[1]);
+    adresse_serveur.sin_port = htons(atoi(argv[2]));
 
-    if(connect(socket_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Connection failed");
-        close(socket_fd);
+    if (connect(descripteur_socket, (struct sockaddr *)&adresse_serveur, sizeof(adresse_serveur)) < 0) {
+        perror("Échec de connexion");
+        close(descripteur_socket);
         return 1;
     }
 
-    char pseudo[MAX_PSEUDO_LENGTH];
+    char pseudo[TAILLE_MAX_PSEUDO];
     printf("Entrez votre pseudo: ");
-    if(fgets(pseudo, MAX_PSEUDO_LENGTH, stdin) == NULL) {
+    if (fgets(pseudo, TAILLE_MAX_PSEUDO, stdin) == NULL) {
         printf("Erreur de lecture du pseudo\n");
-        close(socket_fd);
+        close(descripteur_socket);
         return 1;
     }
-    pseudo[strcspn(pseudo, "\n")] = 0;  // Remove newline
+    pseudo[strcspn(pseudo, "\n")] = 0;
 
-    // Send login request
-    char buffer[BUFFER_SIZE];
-    snprintf(buffer, BUFFER_SIZE, "LOGIN %s", pseudo);
-    if(send(socket_fd, buffer, strlen(buffer), 0) < 0) {
-        perror("Send failed");
-        close(socket_fd);
+    char buffer[TAILLE_BUFFER];
+    snprintf(buffer, TAILLE_BUFFER, "LOGIN %s", pseudo);
+    if (send(descripteur_socket, buffer, strlen(buffer), 0) < 0) {
+        perror("Échec d'envoi");
+        close(descripteur_socket);
         return 1;
     }
 
-    // Wait for server response
-    memset(buffer, 0, BUFFER_SIZE);
-    ssize_t bytes_read = recv(socket_fd, buffer, BUFFER_SIZE - 1, 0);
-    if(bytes_read <= 0) {
+    memset(buffer, 0, TAILLE_BUFFER);
+    ssize_t octets_lus = recv(descripteur_socket, buffer, TAILLE_BUFFER - 1, 0);
+    if (octets_lus <= 0) {
         printf("Erreur de lecture de la réponse du serveur\n");
-        close(socket_fd);
+        close(descripteur_socket);
         return 1;
     }
-    buffer[bytes_read] = '\0';
+    buffer[octets_lus] = '\0';
 
-    if(strncmp(buffer, "ERROR", 5) == 0) {
-        printf("%s\n", buffer + 6);  // Skip "ERROR "
-        close(socket_fd);
+    if (strncmp(buffer, "ERROR", 5) == 0) {
+        printf("%s\n", buffer + 6);
+        close(descripteur_socket);
         return 1;
-    } else if(strcmp(buffer, "LOGIN_OK") != 0) {
+    } else if (strcmp(buffer, "LOGIN_OK") != 0) {
         printf("Réponse inattendue du serveur: %s\n", buffer);
-        close(socket_fd);
+        close(descripteur_socket);
         return 1;
     }
 
-    // Après la connexion réussie et le LOGIN_OK
     printf("Connecté au serveur! Tapez /help pour la liste des commandes\n");
 
-    // Initialisation de la structure ClientData
-    ClientData *data = malloc(sizeof(ClientData));
-    data->socket = socket_fd;
-    strncpy(data->pseudo, pseudo, MAX_PSEUDO_LENGTH - 1);
-    data->pseudo[MAX_PSEUDO_LENGTH - 1] = '\0';
-    data->player_num = 0;  // Sera mis à jour quand une partie commencera
-    
-    // Initialisation du jeu
-    init_awale(&data->jeu,"vide","vide");
+    DonneesClient *donnees = malloc(sizeof(DonneesClient));
+    donnees->socket = descripteur_socket;
+    strncpy(donnees->pseudo, pseudo, TAILLE_MAX_PSEUDO - 1);
+    donnees->pseudo[TAILLE_MAX_PSEUDO - 1] = '\0';
+    donnees->numero_joueur = 0;
 
-    pthread_t receive_thread;
-    pthread_create(&receive_thread, NULL, receive_messages, data);
+    init_awale(&donnees->jeu, "vide", "vide");
 
-    while(1) {
-        fgets(buffer, BUFFER_SIZE, stdin);
+    pthread_t thread_reception;
+    pthread_create(&thread_reception, NULL, recevoir_messages, donnees);
+
+    while (1) {
+        fgets(buffer, TAILLE_BUFFER, stdin);
         buffer[strcspn(buffer, "\n")] = 0;
 
-        if(strcmp(buffer, "/help") == 0) {
-            print_help();
+        if (strcmp(buffer, "/help") == 0) {
+            afficher_aide();
         }
-        else if(strcmp(buffer, "/list") == 0) {
-            write(socket_fd, "LIST", 4);
+        else if (strcmp(buffer, "/list") == 0) {
+            envoyer_commande_simple(descripteur_socket, "LIST");
         }
-        else if(strcmp(buffer, "/games") == 0) {
-            write(socket_fd, "GAMES", 5);
+        else if (strcmp(buffer, "/games") == 0) {
+            envoyer_commande_simple(descripteur_socket, "GAMES");
         }
-        else if(strncmp(buffer, "/challenge", 10) == 0 || strncmp(buffer, "/c", 2) == 0) {
-            char opponent[MAX_PSEUDO_LENGTH];
-            if(sscanf(buffer, "/challenge %s", opponent) == 1) {
-                snprintf(buffer, BUFFER_SIZE, "CHALLENGE %s", opponent);
-                write(socket_fd, buffer, strlen(buffer));
-                printf("Défi envoyé à %s\n", opponent);
-            } else  if(sscanf(buffer, "/c %s", opponent) == 1) {
-                snprintf(buffer, BUFFER_SIZE, "CHALLENGE %s", opponent);
-                write(socket_fd, buffer, strlen(buffer));
-                printf("Défi envoyé à %s\n", opponent);
-            } 
-            else {
-                printf("Usage: /challenge <pseudo>\n");
-            }
+        else if (strncmp(buffer, "/challenge", 10) == 0 || strncmp(buffer, "/c", 2) == 0) {
+            gerer_defi(descripteur_socket, buffer);
         }
-        else if(strncmp(buffer, "/accept", 7) == 0, strncmp(buffer, "/a", 2) == 0) {
-            char challenger[MAX_PSEUDO_LENGTH];
-            if(sscanf(buffer, "/accept %s", challenger) == 1) {
-                snprintf(buffer, BUFFER_SIZE, "ACCEPT %s", challenger);
-                write(socket_fd, buffer, strlen(buffer));
-                printf("Défi accepté! La partie va commencer...\n");
-            } else if(sscanf(buffer, "/a %s", challenger) == 1) {
-                snprintf(buffer, BUFFER_SIZE, "ACCEPT %s", challenger);
-                write(socket_fd, buffer, strlen(buffer));
-                printf("Défi accepté! La partie va commencer...\n");
-            }
-            else {
-                printf("Usage: /accept <pseudo>\n");
-            }
+        else if (strncmp(buffer, "/accept", 7) == 0 || strncmp(buffer, "/a", 2) == 0) {
+            gerer_acceptation(descripteur_socket, buffer);
         }
-        else if(strncmp(buffer, "/observe", 8) == 0) {
-            int game_id;
-            if(sscanf(buffer, "/observe %d", &game_id) == 1) {
-                snprintf(buffer, BUFFER_SIZE, "OBSERVE %d", game_id);
-                write(socket_fd, buffer, strlen(buffer));
-                printf("Mode observation activé pour la partie %d\n", game_id);
-            } else {
-                printf("Usage: /observe <game_id>\n");
-            }
+        else if (strncmp(buffer, "/observe", 8) == 0) {
+            gerer_observation(descripteur_socket, buffer);
         }
-        else if(strcmp(buffer, "/quit") == 0) {
+        else if (strncmp(buffer, "/message", 8) == 0) {
+            gerer_message(descripteur_socket, buffer);
+        }
+        else if (strcmp(buffer, "/quit") == 0) {
             printf("Au revoir!\n");
             break;
         }
-        else if(buffer[0] >= '1' && buffer[0] <= '6') {
-            int move = buffer[0] - '0';
-            // Vérification locale de la validité du coup
-            if(coup_valide(&data->jeu, move)) {
-                snprintf(buffer, BUFFER_SIZE, "MOVE %d", move);
-                write(socket_fd, buffer, strlen(buffer));
-            } else {
-                printf("Coup invalide, choisissez une case entre 1 et 6 contenant des graines\n");
-            }
+        else if (buffer[0] >= '1' && buffer[0] <= '6') {
+            gerer_coup(descripteur_socket, buffer, donnees);
         }
         else {
             printf("Commande inconnue. Tapez /help pour la liste des commandes\n");
         }
     }
 
-    close(socket_fd);
-    // Avant de fermer la connexion
-    pthread_cancel(receive_thread);
-    free(data);
-    close(socket_fd);
+    pthread_cancel(thread_reception);
+    free(donnees);
+    close(descripteur_socket);
     return 0;
 }
