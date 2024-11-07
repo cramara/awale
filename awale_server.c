@@ -192,6 +192,36 @@ void init_game(Game *game, char *player1, char *player2, int socket1,
   init_awale(&game->jeu, player1, player2);
 }
 
+// Ajouter cette fonction pour retirer un observateur d'une partie
+void retirer_observateur(Game *game, int socket) {
+    for (int i = 0; i < game->nb_observers; i++) {
+        if (game->observers[i] == socket) {
+            // Décaler tous les observateurs suivants
+            for (int j = i; j < game->nb_observers - 1; j++) {
+                game->observers[j] = game->observers[j + 1];
+            }
+            game->nb_observers--;
+            break;
+        }
+    }
+}
+
+// Ajouter cette fonction pour envoyer l'état du jeu uniquement à un observateur
+void send_game_state_to_observer(Game *game, int observer_socket) {
+    char full_state[BUFFER_SIZE];
+    
+    snprintf(full_state, BUFFER_SIZE, "GAMESTATE %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %s %s ",
+             game->jeu.plateau[0], game->jeu.plateau[1], game->jeu.plateau[2],
+             game->jeu.plateau[3], game->jeu.plateau[4], game->jeu.plateau[5],
+             game->jeu.plateau[6], game->jeu.plateau[7], game->jeu.plateau[8],
+             game->jeu.plateau[9], game->jeu.plateau[10], game->jeu.plateau[11],
+             game->jeu.scoreJ1, game->jeu.scoreJ2,
+             game->jeu.joueurCourant, game->jeu.fini, game->jeu.gagnant,
+             game->jeu.pseudo1, game->jeu.pseudo2);
+
+    write(observer_socket, full_state, strlen(full_state));
+}
+
 void *handle_client(void *arg) {
   int socket = *(int *)arg;
   char buffer[BUFFER_SIZE];
@@ -280,6 +310,14 @@ void *handle_client(void *arg) {
             }
         }
         
+        // Vérifier si le joueur essaie de se défier lui-même
+        if (strcmp(challenger_pseudo, opponent) == 0) {
+            const char *error_msg = "ERROR Vous ne pouvez pas vous défier vous-même\n";
+            write(socket, error_msg, strlen(error_msg));
+            pthread_mutex_unlock(&clients_mutex);
+            continue;
+        }
+        
         if (challenger_is_playing) {
             const char *error_msg = "ERROR Vous ne pouvez pas lancer de défi pendant une partie\n";
             write(socket, error_msg, strlen(error_msg));
@@ -315,6 +353,25 @@ void *handle_client(void *arg) {
       char challenger[MAX_PSEUDO_LENGTH];
       sscanf(buffer, "ACCEPT %s", challenger);
 
+      // Vérifier si le joueur essaie d'accepter son propre défi
+      pthread_mutex_lock(&clients_mutex);
+      int is_self_accept = 0;
+      for (int i = 0; i < nb_clients; i++) {
+          if (clients[i].socket == socket) {
+              if (strcmp(clients[i].pseudo, challenger) == 0) {
+                  is_self_accept = 1;
+                  const char *error_msg = "ERROR Vous ne pouvez pas accepter votre propre défi\n";
+                  write(socket, error_msg, strlen(error_msg));
+              }
+              break;
+          }
+      }
+      pthread_mutex_unlock(&clients_mutex);
+
+      if (is_self_accept) {
+          continue;
+      }
+
       // Create new game
       pthread_mutex_lock(&games_mutex);
       Game *game = &games[nb_games++];
@@ -324,19 +381,19 @@ void *handle_client(void *arg) {
       pthread_mutex_lock(&clients_mutex);
       int challenger_socket = -1;
       for (int i = 0; i < nb_clients; i++) {
-        if (strcmp(clients[i].pseudo, challenger) == 0) {
-          challenger_socket = clients[i].socket;
-          clients[i].is_playing = 1;
-          clients[i].game_id = nb_games - 1;
-          break;
-        }
+          if (strcmp(clients[i].pseudo, challenger) == 0) {
+              challenger_socket = clients[i].socket;
+              clients[i].is_playing = 1;
+              clients[i].game_id = nb_games - 1;
+              break;
+          }
       }
       for (int i = 0; i < nb_clients; i++) {
-        if (clients[i].socket == socket) {
-          clients[i].is_playing = 1;
-          clients[i].game_id = nb_games - 1;
-          break;
-        }
+          if (clients[i].socket == socket) {
+              clients[i].is_playing = 1;
+              clients[i].game_id = nb_games - 1;
+              break;
+          }
       }
       pthread_mutex_unlock(&clients_mutex);
 
@@ -346,11 +403,28 @@ void *handle_client(void *arg) {
       int game_id;
       sscanf(buffer, "OBSERVE %d", &game_id);
 
+      // Vérifier si le joueur est déjà en partie
+      pthread_mutex_lock(&clients_mutex);
+      int is_playing = 0;
+      for (int i = 0; i < nb_clients; i++) {
+          if (clients[i].socket == socket && clients[i].is_playing) {
+              is_playing = 1;
+              break;
+          }
+      }
+      pthread_mutex_unlock(&clients_mutex);
+
+      if (is_playing) {
+          const char *error_msg = "ERROR Vous ne pouvez pas observer une partie pendant que vous jouez\n";
+          write(socket, error_msg, strlen(error_msg));
+          continue;
+      }
+
       pthread_mutex_lock(&games_mutex);
-      if (game_id >= 0 && game_id < nb_games &&
-          !games[game_id].jeu.fini) { // On utilise game->jeu.fini
+      if (game_id >= 0 && game_id < nb_games && !games[game_id].jeu.fini) {
         games[game_id].observers[games[game_id].nb_observers++] = socket;
-        broadcast_game_state(&games[game_id]);
+        // Envoyer l'état du jeu uniquement à l'observateur qui vient de se connecter
+        send_game_state_to_observer(&games[game_id], socket);
       }
       pthread_mutex_unlock(&games_mutex);
     } else if (strncmp(buffer, "MESSAGE", 7) == 0) {
@@ -428,8 +502,15 @@ void *handle_client(void *arg) {
 
   // Clean up client
   pthread_mutex_lock(&clients_mutex);
+  pthread_mutex_lock(&games_mutex);
   for (int i = 0; i < nb_clients; i++) {
     if (clients[i].socket == socket) {
+      // Si le client était en train d'observer une partie
+      if (clients[i].game_id >= 0 && !clients[i].is_playing) {
+        retirer_observateur(&games[clients[i].game_id], socket);
+      }
+      
+      // Supprimer le client de la liste
       for (int j = i; j < nb_clients - 1; j++) {
         clients[j] = clients[j + 1];
       }
@@ -437,6 +518,7 @@ void *handle_client(void *arg) {
       break;
     }
   }
+  pthread_mutex_unlock(&games_mutex);
   pthread_mutex_unlock(&clients_mutex);
 
   close(socket);

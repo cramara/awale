@@ -13,6 +13,9 @@
 #define TAILLE_BUFFER 1024
 #define TAILLE_MAX_PSEUDO 50
 #define MAX_PARTIES 25
+#define RESET_COLOR "\033[0m"
+#define GREEN_TEXT "\033[32m"
+#define RED_TEXT "\033[31m"
 
 typedef struct {
     int socket;
@@ -103,6 +106,8 @@ void *recevoir_messages(void *arg) {
             char adversaire[TAILLE_MAX_PSEUDO];
             sscanf(buffer, "CHALLENGE_FROM %s", adversaire);
             printf("\nDéfi reçu de %s! Tapez '/accept %s' pour accepter\n", adversaire, adversaire);
+        } else if (strncmp(buffer, "ERROR", 5) == 0) {
+            printf("\n%s%s%s", RED_TEXT, buffer + 6, RESET_COLOR);
         } else if (strncmp(buffer, "MESSAGE", 7) == 0) {
             printf("\n%s", buffer + 7);
         }
@@ -131,7 +136,6 @@ void gerer_acceptation(int socket_fd, char* buffer) {
         sscanf(buffer, "/a %s", adversaire) == 1) {
         snprintf(buffer, TAILLE_BUFFER, "ACCEPT %s", adversaire);
         envoyer_commande_simple(socket_fd, buffer);
-        printf("Défi accepté! La partie va commencer...\n");
     } else {
         printf("Usage: /accept <pseudo>\n");
     }
