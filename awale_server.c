@@ -56,49 +56,6 @@ pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t games_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t historique_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-void init_historique_test() {
-  pthread_mutex_lock(&historique_mutex);
-
-  // Partie 1
-  strncpy(historique[0].player1, "Pierre", MAX_PSEUDO_LENGTH - 1);
-  strncpy(historique[0].player2, "Paul", MAX_PSEUDO_LENGTH - 1);
-  strncpy(historique[0].winner, "Pierre", MAX_PSEUDO_LENGTH - 1);
-  historique[0].score_player1 = 25;
-  historique[0].score_player2 = 12;
-
-  // Partie 2
-  strncpy(historique[1].player1, "Marie", MAX_PSEUDO_LENGTH - 1);
-  strncpy(historique[1].player2, "Jean", MAX_PSEUDO_LENGTH - 1);
-  strncpy(historique[1].winner, "Marie", MAX_PSEUDO_LENGTH - 1);
-  historique[1].score_player1 = 30;
-  historique[1].score_player2 = 15;
-
-  // Partie 3
-  strncpy(historique[2].player1, "Sophie", MAX_PSEUDO_LENGTH - 1);
-  strncpy(historique[2].player2, "Lucas", MAX_PSEUDO_LENGTH - 1);
-  strncpy(historique[2].winner, "Sophie", MAX_PSEUDO_LENGTH - 1);
-  historique[2].score_player1 = 28;
-  historique[2].score_player2 = 20;
-
-  // Partie 4
-  strncpy(historique[3].player1, "Alice", MAX_PSEUDO_LENGTH - 1);
-  strncpy(historique[3].player2, "Bob", MAX_PSEUDO_LENGTH - 1);
-  strncpy(historique[3].winner, "Bob", MAX_PSEUDO_LENGTH - 1);
-  historique[3].score_player1 = 18;
-  historique[3].score_player2 = 24;
-
-  // Partie 5
-  strncpy(historique[4].player1, "Thomas", MAX_PSEUDO_LENGTH - 1);
-  strncpy(historique[4].player2, "Julie", MAX_PSEUDO_LENGTH - 1);
-  strncpy(historique[4].winner, "Julie", MAX_PSEUDO_LENGTH - 1);
-  historique[4].score_player1 = 22;
-  historique[4].score_player2 = 26;
-
-  nb_historique = 5;
-
-  pthread_mutex_unlock(&historique_mutex);
-}
-
 void broadcast_game_state(Game *game) {
   // Buffer pour stocker l'état complet
   char full_state[BUFFER_SIZE];
@@ -167,38 +124,36 @@ void ajouter_historique(const char *buffer) {
 }
 
 void send_history(int socket) {
-    char history_message[BUFFER_SIZE] = "HISTORY ";
+  char history_message[BUFFER_SIZE] = "HISTORY ";
 
-    pthread_mutex_lock(&historique_mutex);
-    
-    // Si aucune partie n'a été jouée
-    if (nb_historique == 0) {
-        strcat(history_message, "NONE\n");
-        write(socket, history_message, strlen(history_message));
-        pthread_mutex_unlock(&historique_mutex);
-        return;
-    }
-    
-    // Pour chaque partie dans l'historique
-    for (int i = 0; i < nb_historique; i++) {
-        char line[256];
-        // Format: <gagnant> <perdant> <score1> <score2>|
-        snprintf(line, sizeof(line), "%s %s %u %u|",
-                historique[i].winner,
-                (strcmp(historique[i].winner, historique[i].player1) == 0) 
-                    ? historique[i].player2 
-                    : historique[i].player1,
-                historique[i].score_player1,
-                historique[i].score_player2);
-        
-        strcat(history_message, line);
-    }
-    strcat(history_message, "\n");
-    
-    // Envoie le message complet
+  pthread_mutex_lock(&historique_mutex);
+
+  // Si aucune partie n'a été jouée
+  if (nb_historique == 0) {
+    strcat(history_message, "NONE\n");
     write(socket, history_message, strlen(history_message));
-    
     pthread_mutex_unlock(&historique_mutex);
+    return;
+  }
+
+  // Pour chaque partie dans l'historique
+  for (int i = 0; i < nb_historique; i++) {
+    char line[256];
+    // Format: <gagnant> <perdant> <score1> <score2>|
+    snprintf(line, sizeof(line), "%s %s %u %u|", historique[i].winner,
+             (strcmp(historique[i].winner, historique[i].player1) == 0)
+                 ? historique[i].player2
+                 : historique[i].player1,
+             historique[i].score_player1, historique[i].score_player2);
+
+    strcat(history_message, line);
+  }
+  strcat(history_message, "\n");
+
+  // Envoie le message complet
+  write(socket, history_message, strlen(history_message));
+
+  pthread_mutex_unlock(&historique_mutex);
 }
 
 void send_message(int socket, char *buffer) {
@@ -482,7 +437,6 @@ int main(int argc, char **argv) {
   }
 
   srand(time(NULL));
-  init_historique_test();
 
   int server_socket = socket(AF_INET, SOCK_STREAM, 0);
   struct sockaddr_in server_addr;
