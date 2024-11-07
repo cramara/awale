@@ -2,13 +2,13 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <signal.h>
 
 #define TAILLE_BUFFER 1024
 #define TAILLE_MAX_PSEUDO 50
@@ -18,10 +18,10 @@
 #define RED_TEXT "\033[31m"
 
 typedef struct {
-    int socket;
-    unsigned int numero_joueur;
-    char pseudo[TAILLE_MAX_PSEUDO];
-    Awale jeu;
+  int socket;
+  unsigned int numero_joueur;
+  char pseudo[TAILLE_MAX_PSEUDO];
+  Awale jeu;
 } DonneesClient;
 
 static DonneesClient *donnees_globales = NULL;
@@ -47,13 +47,15 @@ typedef struct {
 
 InfoPartie parties[MAX_PARTIES];
 
-void envoyer_historique_partie(int socket_fd __attribute__((unused)), DonneesClient *donnees) {
+void envoyer_historique_partie(int socket_fd, DonneesClient *donnees) {
   char buffer[TAILLE_BUFFER];
   // format de la commande: HISTORY <pseudo1 = gagnant> <pseudo2 = perdant>
   // <score joueur 1> <score joueur 2>
   snprintf(buffer, TAILLE_BUFFER, "ADD_HISTORY %s %s %d %d",
            donnees->jeu.pseudo1, donnees->jeu.pseudo2, donnees->jeu.scoreJ1,
            donnees->jeu.scoreJ2);
+
+  write(socket_fd, buffer, strlen(buffer));
 }
 
 void afficher_historique(char *buffer) {
@@ -155,7 +157,7 @@ void *recevoir_messages(void *arg) {
       printf("\nDéfi reçu de %s! Tapez '/accept %s' pour accepter\n",
              adversaire, adversaire);
     } else if (strncmp(buffer, "ERROR", 5) == 0) {
-        printf("\n%s%s%s", RED_TEXT, buffer + 6, RESET_COLOR);
+      printf("\n%s%s%s", RED_TEXT, buffer + 6, RESET_COLOR);
     } else if (strncmp(buffer, "MESSAGE", 7) == 0) {
       printf("\n%s", buffer + 7);
     } else if (strncmp(buffer, "HISTORY", 7) == 0) {
@@ -169,26 +171,26 @@ void envoyer_commande_simple(int socket_fd, const char *commande) {
   write(socket_fd, commande, strlen(commande));
 }
 
-void gerer_defi(int socket_fd, char* buffer) {
-    char adversaire[TAILLE_MAX_PSEUDO];
-    if (sscanf(buffer, "/challenge %s", adversaire) == 1 || 
-        sscanf(buffer, "/c %s", adversaire) == 1) {
-        snprintf(buffer, TAILLE_BUFFER, "CHALLENGE %s", adversaire);
-        envoyer_commande_simple(socket_fd, buffer);
-    } else {
-        printf("Usage: /challenge <pseudo>\n");
-    }
+void gerer_defi(int socket_fd, char *buffer) {
+  char adversaire[TAILLE_MAX_PSEUDO];
+  if (sscanf(buffer, "/challenge %s", adversaire) == 1 ||
+      sscanf(buffer, "/c %s", adversaire) == 1) {
+    snprintf(buffer, TAILLE_BUFFER, "CHALLENGE %s", adversaire);
+    envoyer_commande_simple(socket_fd, buffer);
+  } else {
+    printf("Usage: /challenge <pseudo>\n");
+  }
 }
 
-void gerer_acceptation(int socket_fd, char* buffer) {
-    char adversaire[TAILLE_MAX_PSEUDO];
-    if (sscanf(buffer, "/accept %s", adversaire) == 1 || 
-        sscanf(buffer, "/a %s", adversaire) == 1) {
-        snprintf(buffer, TAILLE_BUFFER, "ACCEPT %s", adversaire);
-        envoyer_commande_simple(socket_fd, buffer);
-    } else {
-        printf("Usage: /accept <pseudo>\n");
-    }
+void gerer_acceptation(int socket_fd, char *buffer) {
+  char adversaire[TAILLE_MAX_PSEUDO];
+  if (sscanf(buffer, "/accept %s", adversaire) == 1 ||
+      sscanf(buffer, "/a %s", adversaire) == 1) {
+    snprintf(buffer, TAILLE_BUFFER, "ACCEPT %s", adversaire);
+    envoyer_commande_simple(socket_fd, buffer);
+  } else {
+    printf("Usage: /accept <pseudo>\n");
+  }
 }
 
 void gerer_observation(int socket_fd, char *buffer) {
@@ -218,36 +220,37 @@ void gerer_message(int socket_fd, char *buffer) {
   }
 }
 
-void gerer_coup(int socket_fd, char* buffer, DonneesClient* donnees) {
-    int coup = buffer[0] - '0';
-    if (coup_valide(&donnees->jeu, coup)) {
-        snprintf(buffer, TAILLE_BUFFER, "MOVE %d", coup);
-        envoyer_commande_simple(socket_fd, buffer);
-    } else {
-        printf("Coup invalide, choisissez une case entre 1 et 6 contenant des graines\n");
-    }
+void gerer_coup(int socket_fd, char *buffer, DonneesClient *donnees) {
+  int coup = buffer[0] - '0';
+  if (coup_valide(&donnees->jeu, coup)) {
+    snprintf(buffer, TAILLE_BUFFER, "MOVE %d", coup);
+    envoyer_commande_simple(socket_fd, buffer);
+  } else {
+    printf("Coup invalide, choisissez une case entre 1 et 6 contenant des "
+           "graines\n");
+  }
 }
 
 // Fonction pour vérifier si un joueur est en partie
 int est_en_partie(DonneesClient *donnees) {
-    return donnees->numero_joueur == 1 || donnees->numero_joueur == 2;
+  return donnees->numero_joueur == 1 || donnees->numero_joueur == 2;
 }
 
 // Fonction de nettoyage
 void cleanup() {
-    // Libération des ressources si nécessaire
+  // Libération des ressources si nécessaire
 }
 
 // Gestionnaire de signal
 void gestionnaire_signal(int signum) {
-    printf("\nSignal %d reçu. Nettoyage et fermeture...\n", signum);
-    if (descripteur_socket_global != -1) {
-        close(descripteur_socket_global);
-    }
-    if (donnees_globales != NULL) {
-        free(donnees_globales);
-    }
-    exit(signum);
+  printf("\nSignal %d reçu. Nettoyage et fermeture...\n", signum);
+  if (descripteur_socket_global != -1) {
+    close(descripteur_socket_global);
+  }
+  if (donnees_globales != NULL) {
+    free(donnees_globales);
+  }
+  exit(signum);
 }
 
 int main(int argc, char **argv) {
@@ -275,46 +278,46 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-    char pseudo[TAILLE_MAX_PSEUDO];
-    char buffer[TAILLE_BUFFER];
-    int login_successful = 0;
+  char pseudo[TAILLE_MAX_PSEUDO];
+  char buffer[TAILLE_BUFFER];
+  int login_successful = 0;
 
-    while (!login_successful) {
-        printf("Entrez votre pseudo: ");
-        if (fgets(pseudo, TAILLE_MAX_PSEUDO, stdin) == NULL) {
-            printf("Erreur de lecture du pseudo\n");
-            close(descripteur_socket);
-            return 1;
-        }
-        pseudo[strcspn(pseudo, "\n")] = 0;
-
-        snprintf(buffer, TAILLE_BUFFER, "LOGIN %s", pseudo);
-        if (send(descripteur_socket, buffer, strlen(buffer), 0) < 0) {
-            perror("Échec d'envoi");
-            close(descripteur_socket);
-            return 1;
-        }
-
-        memset(buffer, 0, TAILLE_BUFFER);
-        ssize_t octets_lus = recv(descripteur_socket, buffer, TAILLE_BUFFER - 1, 0);
-        if (octets_lus <= 0) {
-            printf("Erreur de lecture de la réponse du serveur\n");
-            close(descripteur_socket);
-            return 1;
-        }
-        buffer[octets_lus] = '\0';
-
-        if (strncmp(buffer, "ERROR", 5) == 0) {
-            printf("%s\n", buffer + 6);
-            continue;  // Redemander un pseudo
-        } else if (strcmp(buffer, "LOGIN_OK") == 0) {
-            login_successful = 1;
-        } else {
-            printf("Réponse inattendue du serveur: %s\n", buffer);
-            close(descripteur_socket);
-            return 1;
-        }
+  while (!login_successful) {
+    printf("Entrez votre pseudo: ");
+    if (fgets(pseudo, TAILLE_MAX_PSEUDO, stdin) == NULL) {
+      printf("Erreur de lecture du pseudo\n");
+      close(descripteur_socket);
+      return 1;
     }
+    pseudo[strcspn(pseudo, "\n")] = 0;
+
+    snprintf(buffer, TAILLE_BUFFER, "LOGIN %s", pseudo);
+    if (send(descripteur_socket, buffer, strlen(buffer), 0) < 0) {
+      perror("Échec d'envoi");
+      close(descripteur_socket);
+      return 1;
+    }
+
+    memset(buffer, 0, TAILLE_BUFFER);
+    ssize_t octets_lus = recv(descripteur_socket, buffer, TAILLE_BUFFER - 1, 0);
+    if (octets_lus <= 0) {
+      printf("Erreur de lecture de la réponse du serveur\n");
+      close(descripteur_socket);
+      return 1;
+    }
+    buffer[octets_lus] = '\0';
+
+    if (strncmp(buffer, "ERROR", 5) == 0) {
+      printf("%s\n", buffer + 6);
+      continue; // Redemander un pseudo
+    } else if (strcmp(buffer, "LOGIN_OK") == 0) {
+      login_successful = 1;
+    } else {
+      printf("Réponse inattendue du serveur: %s\n", buffer);
+      close(descripteur_socket);
+      return 1;
+    }
+  }
 
   printf("Connecté au serveur! Tapez /help pour la liste des commandes\n");
 
@@ -326,93 +329,84 @@ int main(int argc, char **argv) {
 
   init_awale(&donnees->jeu, "vide", "vide");
 
-    pthread_t thread_reception;
-    pthread_create(&thread_reception, NULL, recevoir_messages, donnees);
+  pthread_t thread_reception;
+  pthread_create(&thread_reception, NULL, recevoir_messages, donnees);
 
-    // Configuration du gestionnaire de signaux
-    struct sigaction sa;
-    sa.sa_handler = gestionnaire_signal;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = 0;
+  // Configuration du gestionnaire de signaux
+  struct sigaction sa;
+  sa.sa_handler = gestionnaire_signal;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = 0;
 
-    // Intercepter tous les signaux qui peuvent causer un arrêt
-    sigaction(SIGABRT, &sa, NULL);    // Abort
-    sigaction(SIGFPE, &sa, NULL);     // Floating point exception
-    sigaction(SIGILL, &sa, NULL);     // Illegal instruction
-    sigaction(SIGINT, &sa, NULL);     // Interrupt (Ctrl+C)
-    sigaction(SIGSEGV, &sa, NULL);    // Segmentation fault
-    sigaction(SIGTERM, &sa, NULL);    // Termination
-    sigaction(SIGQUIT, &sa, NULL);    // Quit
-    sigaction(SIGTSTP, &sa, NULL);    // Stop typed at terminal (Ctrl+Z)
-    sigaction(SIGTTIN, &sa, NULL);    // Terminal input
-    sigaction(SIGTTOU, &sa, NULL);    // Terminal output
-    sigaction(SIGUSR1, &sa, NULL);    // User-defined 1
-    sigaction(SIGUSR2, &sa, NULL);    // User-defined 2
-    sigaction(SIGPIPE, &sa, NULL);    // Broken pipe
-    sigaction(SIGALRM, &sa, NULL);    // Alarm clock
-    sigaction(SIGCHLD, &sa, NULL);    // Child status changed
-    sigaction(SIGCONT, &sa, NULL);    // Continue if stopped
-    sigaction(SIGHUP, &sa, NULL);     // Hangup
-    sigaction(SIGBUS, &sa, NULL);     // Bus error
-    
-    // Ignorer SIGPIPE pour éviter l'arrêt sur broken pipe
-    signal(SIGPIPE, SIG_IGN);
+  // Intercepter tous les signaux qui peuvent causer un arrêt
+  sigaction(SIGABRT, &sa, NULL); // Abort
+  sigaction(SIGFPE, &sa, NULL);  // Floating point exception
+  sigaction(SIGILL, &sa, NULL);  // Illegal instruction
+  sigaction(SIGINT, &sa, NULL);  // Interrupt (Ctrl+C)
+  sigaction(SIGSEGV, &sa, NULL); // Segmentation fault
+  sigaction(SIGTERM, &sa, NULL); // Termination
+  sigaction(SIGQUIT, &sa, NULL); // Quit
+  sigaction(SIGTSTP, &sa, NULL); // Stop typed at terminal (Ctrl+Z)
+  sigaction(SIGTTIN, &sa, NULL); // Terminal input
+  sigaction(SIGTTOU, &sa, NULL); // Terminal output
+  sigaction(SIGUSR1, &sa, NULL); // User-defined 1
+  sigaction(SIGUSR2, &sa, NULL); // User-defined 2
+  sigaction(SIGPIPE, &sa, NULL); // Broken pipe
+  sigaction(SIGALRM, &sa, NULL); // Alarm clock
+  sigaction(SIGCHLD, &sa, NULL); // Child status changed
+  sigaction(SIGCONT, &sa, NULL); // Continue if stopped
+  sigaction(SIGHUP, &sa, NULL);  // Hangup
+  sigaction(SIGBUS, &sa, NULL);  // Bus error
 
-    // Sauvegarder les références pour le gestionnaire de signaux
-    descripteur_socket_global = descripteur_socket;
-    donnees_globales = donnees;
+  // Ignorer SIGPIPE pour éviter l'arrêt sur broken pipe
+  signal(SIGPIPE, SIG_IGN);
+
+  // Sauvegarder les références pour le gestionnaire de signaux
+  descripteur_socket_global = descripteur_socket;
+  donnees_globales = donnees;
 
   while (1) {
     fgets(buffer, TAILLE_BUFFER, stdin);
     buffer[strcspn(buffer, "\n")] = 0;
 
-        if (strcmp(buffer, "/help") == 0) {
-            afficher_aide();
-        }
-        else if (strcmp(buffer, "/list") == 0) {
-            envoyer_commande_simple(descripteur_socket, "LIST");
-        }
-        else if (strcmp(buffer, "/games") == 0) {
-            envoyer_commande_simple(descripteur_socket, "GAMES");
-        }
-        else if (strncmp(buffer, "/challenge", 10) == 0 || strncmp(buffer, "/c", 2) == 0) {
-            gerer_defi(descripteur_socket, buffer);
-        }
-        else if (strncmp(buffer, "/accept", 7) == 0 || strncmp(buffer, "/a", 2) == 0) {
-            gerer_acceptation(descripteur_socket, buffer);
-        }
-        else if (strncmp(buffer, "/observe", 8) == 0) {
-            gerer_observation(descripteur_socket, buffer);
-        }
-        else if (strncmp(buffer, "/message", 8) == 0) {
-            gerer_message(descripteur_socket, buffer);
-        }
-        else if (strncmp(buffer, "/history", 9) == 0) {
-            envoyer_commande_simple(descripteur_socket, "HISTORY");
-        }
-        else if (strcmp(buffer, "/quit") == 0) {
-            if (est_en_partie(donnees)) {
-                envoyer_commande_simple(descripteur_socket, "FORFEIT");
-                printf("Abandon de la partie en cours...\n");
-            }
-            printf("Au revoir!\n");
-            break;
-        }
-        else if (strcmp(buffer, "/forfeit") == 0 || strcmp(buffer, "/ff") == 0) {
-            envoyer_commande_simple(descripteur_socket, "FORFEIT");
-            printf("Vous avez abandonné la partie.\n");
-        }
-        else if (buffer[0] >= '1' && buffer[0] <= '6') {
-            gerer_coup(descripteur_socket, buffer, donnees);
-        }
-        else {
-            printf("Commande inconnue. Tapez /help pour la liste des commandes\n");
-        }
+    if (strcmp(buffer, "/help") == 0) {
+      afficher_aide();
+    } else if (strcmp(buffer, "/list") == 0) {
+      envoyer_commande_simple(descripteur_socket, "LIST");
+    } else if (strcmp(buffer, "/games") == 0) {
+      envoyer_commande_simple(descripteur_socket, "GAMES");
+    } else if (strncmp(buffer, "/challenge", 10) == 0 ||
+               strncmp(buffer, "/c", 2) == 0) {
+      gerer_defi(descripteur_socket, buffer);
+    } else if (strncmp(buffer, "/accept", 7) == 0 ||
+               strncmp(buffer, "/a", 2) == 0) {
+      gerer_acceptation(descripteur_socket, buffer);
+    } else if (strncmp(buffer, "/observe", 8) == 0) {
+      gerer_observation(descripteur_socket, buffer);
+    } else if (strncmp(buffer, "/message", 8) == 0) {
+      gerer_message(descripteur_socket, buffer);
+    } else if (strncmp(buffer, "/history", 9) == 0) {
+      envoyer_commande_simple(descripteur_socket, "HISTORY");
+    } else if (strcmp(buffer, "/quit") == 0) {
+      if (est_en_partie(donnees)) {
+        envoyer_commande_simple(descripteur_socket, "FORFEIT");
+        printf("Abandon de la partie en cours...\n");
+      }
+      printf("Au revoir!\n");
+      break;
+    } else if (strcmp(buffer, "/forfeit") == 0 || strcmp(buffer, "/ff") == 0) {
+      envoyer_commande_simple(descripteur_socket, "FORFEIT");
+      printf("Vous avez abandonné la partie.\n");
+    } else if (buffer[0] >= '1' && buffer[0] <= '6') {
+      gerer_coup(descripteur_socket, buffer, donnees);
+    } else {
+      printf("Commande inconnue. Tapez /help pour la liste des commandes\n");
     }
+  }
 
-    pthread_cancel(thread_reception);
-    free(donnees);
-    close(descripteur_socket);
-    cleanup();
-    return 0;
+  pthread_cancel(thread_reception);
+  free(donnees);
+  close(descripteur_socket);
+  cleanup();
+  return 0;
 }
