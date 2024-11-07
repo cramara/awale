@@ -37,12 +37,7 @@ void init_awale(Awale *jeu, char *pseudo1, char *pseudo2) {
     jeu->gagnant = 0;
     strcpy(jeu->pseudo1, pseudo1);
     strcpy(jeu->pseudo2, pseudo2);
-    printf("pseudo1  : %s\n",pseudo1);
-    printf("pseudo2  : %s\n",pseudo2);
-    printf("joueur1  : %s\n",jeu->pseudo1);
-    printf("joueur2  : %s\n",jeu->pseudo2);
-    
-}
+    }
 
 // Vérifie si un coup est valide
 int coup_valide(Awale *jeu, int trou) {
