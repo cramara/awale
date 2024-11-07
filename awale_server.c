@@ -49,7 +49,7 @@ void broadcast_game_state(Game *game) {
   char full_state[BUFFER_SIZE];
   
   // Créer directement l'état du jeu dans le buffer
-  snprintf(full_state, BUFFER_SIZE, "GAMESTATE %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %s %s",
+  snprintf(full_state, BUFFER_SIZE, "GAMESTATE %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %s %s ",
            game->jeu.plateau[0], game->jeu.plateau[1], game->jeu.plateau[2],
            game->jeu.plateau[3], game->jeu.plateau[4], game->jeu.plateau[5],
            game->jeu.plateau[6], game->jeu.plateau[7], game->jeu.plateau[8],
@@ -57,6 +57,11 @@ void broadcast_game_state(Game *game) {
            game->jeu.scoreJ1, game->jeu.scoreJ2,
            game->jeu.joueurCourant, game->jeu.fini, game->jeu.gagnant,
            game->jeu.pseudo1, game->jeu.pseudo2);
+
+
+  printf("Broadcasting game state: %s\n", full_state);
+  printf("socket1: %d\n", game->socket1);
+  printf("socket2: %d\n", game->socket2);
 
   // Envoyer aux joueurs
   write(game->socket1, full_state, strlen(full_state));
@@ -185,9 +190,6 @@ void init_game(Game *game, char *player1, char *player2, int socket1,
 
   // Initialise le jeu
   init_awale(&game->jeu, player1, player2);
-
-  // Envoie immédiatement l'état initial aux deux joueurs
-  broadcast_game_state(game);
 }
 
 void *handle_client(void *arg) {
@@ -382,6 +384,45 @@ void *handle_client(void *arg) {
         }
         pthread_mutex_unlock(&games_mutex);
       }
+    } else if (strncmp(buffer, "FORFEIT", 7) == 0) {
+        pthread_mutex_lock(&clients_mutex);
+        int game_id = -1;
+        for (int i = 0; i < nb_clients; i++) {
+            if (clients[i].socket == socket && clients[i].is_playing) {
+                game_id = clients[i].game_id;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&clients_mutex);
+
+        if (game_id != -1) {
+            pthread_mutex_lock(&games_mutex);
+            Game *game = &games[game_id];
+            
+            // Déterminer qui abandonne et qui gagne
+            if (socket == game->socket1) {
+                game->jeu.scoreJ2 = 25;  // Le joueur 2 gagne
+                game->jeu.gagnant = 2;
+            } else {
+                game->jeu.scoreJ1 = 25;  // Le joueur 1 gagne
+                game->jeu.gagnant = 1;
+            }
+            
+            game->jeu.fini = 1;
+            broadcast_game_state(game);
+            
+            // Mettre à jour le statut des joueurs
+            pthread_mutex_lock(&clients_mutex);
+            for (int i = 0; i < nb_clients; i++) {
+                if (clients[i].game_id == game_id) {
+                    clients[i].is_playing = 0;
+                    clients[i].game_id = -1;
+                }
+            }
+            pthread_mutex_unlock(&clients_mutex);
+            
+            pthread_mutex_unlock(&games_mutex);
+        }
     }
   }
 

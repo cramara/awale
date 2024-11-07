@@ -8,10 +8,21 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <signal.h>
 
 #define TAILLE_BUFFER 1024
 #define TAILLE_MAX_PSEUDO 50
 #define MAX_PARTIES 25
+
+typedef struct {
+    int socket;
+    unsigned int numero_joueur;
+    char pseudo[TAILLE_MAX_PSEUDO];
+    Awale jeu;
+} DonneesClient;
+
+static DonneesClient *donnees_globales = NULL;
+static int descripteur_socket_global = -1;
 
 void afficher_aide() {
     printf("\nCommandes disponibles:\n");
@@ -21,6 +32,7 @@ void afficher_aide() {
     printf("/observe <id_partie> - Observer une partie\n");
     printf("/message <pseudo || all> <message> - Envoyer un message\n");
     printf("/quit - Quitter le jeu\n");
+    printf("/forfeit ou /ff - Abandonner la partie en cours\n");
     printf("1-6 - Jouer un coup (pendant une partie)\n\n");
 }
 
@@ -30,13 +42,6 @@ typedef struct {
 } InfoPartie;
 
 InfoPartie parties[MAX_PARTIES];
-
-typedef struct {
-    int socket;
-    unsigned int numero_joueur;
-    char pseudo[TAILLE_MAX_PSEUDO];
-    Awale jeu;
-} DonneesClient;
 
 void *recevoir_messages(void *arg) {
     DonneesClient *donnees = (DonneesClient *)arg;
@@ -165,6 +170,26 @@ void gerer_coup(int socket_fd, char* buffer, DonneesClient* donnees) {
     }
 }
 
+int est_en_partie(DonneesClient *donnees) {
+    return donnees->numero_joueur == 1 || donnees->numero_joueur == 2;
+}
+
+void cleanup() {
+    if (donnees_globales && descripteur_socket_global != -1) {
+        if (est_en_partie(donnees_globales)) {
+            envoyer_commande_simple(descripteur_socket_global, "FORFEIT");
+        }
+        close(descripteur_socket_global);
+    }
+    free(donnees_globales);
+}
+
+void gestionnaire_signal(int signum) {
+    printf("\nSignal %d reçu, nettoyage en cours...\n", signum);
+    cleanup();
+    exit(signum);
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) {
         printf("Usage: %s ip_serveur port\n", argv[0]);
@@ -243,6 +268,39 @@ int main(int argc, char **argv) {
     pthread_t thread_reception;
     pthread_create(&thread_reception, NULL, recevoir_messages, donnees);
 
+    // Configuration du gestionnaire de signaux
+    struct sigaction sa;
+    sa.sa_handler = gestionnaire_signal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+
+    // Intercepter tous les signaux qui peuvent causer un arrêt
+    sigaction(SIGABRT, &sa, NULL);    // Abort
+    sigaction(SIGFPE, &sa, NULL);     // Floating point exception
+    sigaction(SIGILL, &sa, NULL);     // Illegal instruction
+    sigaction(SIGINT, &sa, NULL);     // Interrupt (Ctrl+C)
+    sigaction(SIGSEGV, &sa, NULL);    // Segmentation fault
+    sigaction(SIGTERM, &sa, NULL);    // Termination
+    sigaction(SIGQUIT, &sa, NULL);    // Quit
+    sigaction(SIGTSTP, &sa, NULL);    // Stop typed at terminal (Ctrl+Z)
+    sigaction(SIGTTIN, &sa, NULL);    // Terminal input
+    sigaction(SIGTTOU, &sa, NULL);    // Terminal output
+    sigaction(SIGUSR1, &sa, NULL);    // User-defined 1
+    sigaction(SIGUSR2, &sa, NULL);    // User-defined 2
+    sigaction(SIGPIPE, &sa, NULL);    // Broken pipe
+    sigaction(SIGALRM, &sa, NULL);    // Alarm clock
+    sigaction(SIGCHLD, &sa, NULL);    // Child status changed
+    sigaction(SIGCONT, &sa, NULL);    // Continue if stopped
+    sigaction(SIGHUP, &sa, NULL);     // Hangup
+    sigaction(SIGBUS, &sa, NULL);     // Bus error
+    
+    // Ignorer SIGPIPE pour éviter l'arrêt sur broken pipe
+    signal(SIGPIPE, SIG_IGN);
+
+    // Sauvegarder les références pour le gestionnaire de signaux
+    descripteur_socket_global = descripteur_socket;
+    donnees_globales = donnees;
+
     while (1) {
         fgets(buffer, TAILLE_BUFFER, stdin);
         buffer[strcspn(buffer, "\n")] = 0;
@@ -269,8 +327,16 @@ int main(int argc, char **argv) {
             gerer_message(descripteur_socket, buffer);
         }
         else if (strcmp(buffer, "/quit") == 0) {
+            if (est_en_partie(donnees)) {
+                envoyer_commande_simple(descripteur_socket, "FORFEIT");
+                printf("Abandon de la partie en cours...\n");
+            }
             printf("Au revoir!\n");
             break;
+        }
+        else if (strcmp(buffer, "/forfeit") == 0 || strcmp(buffer, "/ff") == 0) {
+            envoyer_commande_simple(descripteur_socket, "FORFEIT");
+            printf("Vous avez abandonné la partie.\n");
         }
         else if (buffer[0] >= '1' && buffer[0] <= '6') {
             gerer_coup(descripteur_socket, buffer, donnees);
@@ -283,5 +349,6 @@ int main(int argc, char **argv) {
     pthread_cancel(thread_reception);
     free(donnees);
     close(descripteur_socket);
+    cleanup();
     return 0;
 }
