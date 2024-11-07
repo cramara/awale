@@ -115,7 +115,6 @@ void gerer_defi(int socket_fd, char* buffer) {
         sscanf(buffer, "/c %s", adversaire) == 1) {
         snprintf(buffer, TAILLE_BUFFER, "CHALLENGE %s", adversaire);
         envoyer_commande_simple(socket_fd, buffer);
-        printf("Défi envoyé à %s\n", adversaire);
     } else {
         printf("Usage: /challenge <pseudo>\n");
     }
@@ -191,39 +190,44 @@ int main(int argc, char **argv) {
     }
 
     char pseudo[TAILLE_MAX_PSEUDO];
-    printf("Entrez votre pseudo: ");
-    if (fgets(pseudo, TAILLE_MAX_PSEUDO, stdin) == NULL) {
-        printf("Erreur de lecture du pseudo\n");
-        close(descripteur_socket);
-        return 1;
-    }
-    pseudo[strcspn(pseudo, "\n")] = 0;
-
     char buffer[TAILLE_BUFFER];
-    snprintf(buffer, TAILLE_BUFFER, "LOGIN %s", pseudo);
-    if (send(descripteur_socket, buffer, strlen(buffer), 0) < 0) {
-        perror("Échec d'envoi");
-        close(descripteur_socket);
-        return 1;
-    }
+    int login_successful = 0;
 
-    memset(buffer, 0, TAILLE_BUFFER);
-    ssize_t octets_lus = recv(descripteur_socket, buffer, TAILLE_BUFFER - 1, 0);
-    if (octets_lus <= 0) {
-        printf("Erreur de lecture de la réponse du serveur\n");
-        close(descripteur_socket);
-        return 1;
-    }
-    buffer[octets_lus] = '\0';
+    while (!login_successful) {
+        printf("Entrez votre pseudo: ");
+        if (fgets(pseudo, TAILLE_MAX_PSEUDO, stdin) == NULL) {
+            printf("Erreur de lecture du pseudo\n");
+            close(descripteur_socket);
+            return 1;
+        }
+        pseudo[strcspn(pseudo, "\n")] = 0;
 
-    if (strncmp(buffer, "ERROR", 5) == 0) {
-        printf("%s\n", buffer + 6);
-        close(descripteur_socket);
-        return 1;
-    } else if (strcmp(buffer, "LOGIN_OK") != 0) {
-        printf("Réponse inattendue du serveur: %s\n", buffer);
-        close(descripteur_socket);
-        return 1;
+        snprintf(buffer, TAILLE_BUFFER, "LOGIN %s", pseudo);
+        if (send(descripteur_socket, buffer, strlen(buffer), 0) < 0) {
+            perror("Échec d'envoi");
+            close(descripteur_socket);
+            return 1;
+        }
+
+        memset(buffer, 0, TAILLE_BUFFER);
+        ssize_t octets_lus = recv(descripteur_socket, buffer, TAILLE_BUFFER - 1, 0);
+        if (octets_lus <= 0) {
+            printf("Erreur de lecture de la réponse du serveur\n");
+            close(descripteur_socket);
+            return 1;
+        }
+        buffer[octets_lus] = '\0';
+
+        if (strncmp(buffer, "ERROR", 5) == 0) {
+            printf("%s\n", buffer + 6);
+            continue;  // Redemander un pseudo
+        } else if (strcmp(buffer, "LOGIN_OK") == 0) {
+            login_successful = 1;
+        } else {
+            printf("Réponse inattendue du serveur: %s\n", buffer);
+            close(descripteur_socket);
+            return 1;
+        }
     }
 
     printf("Connecté au serveur! Tapez /help pour la liste des commandes\n");

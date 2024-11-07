@@ -14,7 +14,7 @@
 #define MAX_CLIENTS 50
 #define MAX_GAMES 25
 #define MAX_PSEUDO_LENGTH 50
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 2048
 #define MAX_MESSAGE_LENGTH 2048
 #define RESET_COLOR "\033[0m"
 #define GREEN_TEXT "\033[32m"
@@ -47,12 +47,16 @@ pthread_mutex_t games_mutex = PTHREAD_MUTEX_INITIALIZER;
 void broadcast_game_state(Game *game) {
   // Buffer pour stocker l'état complet
   char full_state[BUFFER_SIZE];
-
-  // Obtenir l'état sérialisé du jeu
-  char *game_state = serialiser_jeu(&game->jeu);
-
-  // Créer le message complet avec les pseudos des joueurs
-  snprintf(full_state, BUFFER_SIZE, "GAMESTATE%s", game_state);
+  
+  // Créer directement l'état du jeu dans le buffer
+  snprintf(full_state, BUFFER_SIZE, "GAMESTATE %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %s %s",
+           game->jeu.plateau[0], game->jeu.plateau[1], game->jeu.plateau[2],
+           game->jeu.plateau[3], game->jeu.plateau[4], game->jeu.plateau[5],
+           game->jeu.plateau[6], game->jeu.plateau[7], game->jeu.plateau[8],
+           game->jeu.plateau[9], game->jeu.plateau[10], game->jeu.plateau[11],
+           game->jeu.scoreJ1, game->jeu.scoreJ2,
+           game->jeu.joueurCourant, game->jeu.fini, game->jeu.gagnant,
+           game->jeu.pseudo1, game->jeu.pseudo2);
 
   // Envoyer aux joueurs
   write(game->socket1, full_state, strlen(full_state));
@@ -62,6 +66,9 @@ void broadcast_game_state(Game *game) {
   for (int i = 0; i < game->nb_observers; i++) {
     write(game->observers[i], full_state, strlen(full_state));
   }
+
+  // Nettoyer le buffer
+  memset(full_state, 0, BUFFER_SIZE);
 }
 
 void send_free_players(int socket) {
@@ -75,6 +82,9 @@ void send_free_players(int socket) {
   }
   pthread_mutex_unlock(&clients_mutex);
   write(socket, buffer, strlen(buffer));
+
+  // Nettoyer le buffer
+  memset(buffer, 0, BUFFER_SIZE);
 }
 
 void send_message(int socket, char *buffer) {
@@ -143,14 +153,19 @@ void send_active_games(int socket) {
   pthread_mutex_lock(&games_mutex);
   for (int i = 0; i < nb_games; i++) {
     if (!games[i].jeu.fini) {
-      char game_info[100];
-      snprintf(game_info, 100, " [%d]%s-%s", i, games[i].player1,
+      char game_info[200];
+      snprintf(game_info, 200, " [%d]%s-%s", i, games[i].player1,
                games[i].player2);
       strcat(buffer, game_info);
+      // Nettoyer le buffer temporaire
+      memset(game_info, 0, 200);
     }
   }
   pthread_mutex_unlock(&games_mutex);
   write(socket, buffer, strlen(buffer));
+
+  // Nettoyer le buffer principal
+  memset(buffer, 0, BUFFER_SIZE);
 }
 
 void init_game(Game *game, char *player1, char *player2, int socket1,
@@ -178,50 +193,58 @@ void init_game(Game *game, char *player1, char *player2, int socket1,
 void *handle_client(void *arg) {
   int socket = *(int *)arg;
   char buffer[BUFFER_SIZE];
+  char pseudo[MAX_PSEUDO_LENGTH];
   free(arg);
 
-  // Wait for pseudo
-  memset(buffer, 0, BUFFER_SIZE);
-  ssize_t bytes_read = recv(socket, buffer, BUFFER_SIZE - 1, 0);
-  if (bytes_read <= 0) {
-    close(socket);
-    return NULL;
-  }
-  buffer[bytes_read] = '\0';
-
-  char pseudo[MAX_PSEUDO_LENGTH];
-  if (sscanf(buffer, "LOGIN %s", pseudo) != 1) {
-    const char *error_msg = "ERROR Invalid login format";
-    send(socket, error_msg, strlen(error_msg), 0);
-    close(socket);
-    return NULL;
-  }
-
-  // Check if pseudo already exists
-  pthread_mutex_lock(&clients_mutex);
-  for (int i = 0; i < nb_clients; i++) {
-    if (strcmp(clients[i].pseudo, pseudo) == 0) {
-      pthread_mutex_unlock(&clients_mutex);
-      const char *error_msg = "ERROR Pseudo already taken";
-      send(socket, error_msg, strlen(error_msg), 0);
+  // Boucle pour la saisie du pseudo
+  while (1) {
+    // Wait for pseudo
+    memset(buffer, 0, BUFFER_SIZE);
+    ssize_t bytes_read = recv(socket, buffer, BUFFER_SIZE - 1, 0);
+    if (bytes_read <= 0) {
       close(socket);
       return NULL;
     }
+    buffer[bytes_read] = '\0';
+
+    if (sscanf(buffer, "LOGIN %s", pseudo) != 1) {
+      const char *error_msg = "ERROR Format de connexion invalide";
+      send(socket, error_msg, strlen(error_msg), 0);
+      continue;  // Redemander un pseudo
+    }
+
+    // Check if pseudo already exists
+    pthread_mutex_lock(&clients_mutex);
+    int pseudo_exists = 0;
+    for (int i = 0; i < nb_clients; i++) {
+      if (strcmp(clients[i].pseudo, pseudo) == 0) {
+        pseudo_exists = 1;
+        break;
+      }
+    }
+
+    if (pseudo_exists) {
+      pthread_mutex_unlock(&clients_mutex);
+      const char *error_msg = "ERROR Pseudo déjà utilisé";
+      send(socket, error_msg, strlen(error_msg), 0);
+      continue;  // Redemander un pseudo
+    }
+
+    // Add client to list
+    Client *client = &clients[nb_clients++];
+    client->socket = socket;
+    strncpy(client->pseudo, pseudo, MAX_PSEUDO_LENGTH - 1);
+    client->pseudo[MAX_PSEUDO_LENGTH - 1] = '\0';
+    client->is_playing = 0;
+    client->game_id = -1;
+    pthread_mutex_unlock(&clients_mutex);
+
+    // Send confirmation
+    const char *success_msg = "LOGIN_OK";
+    send(socket, success_msg, strlen(success_msg), 0);
+    printf("New client connected: %s\n", pseudo);
+    break;  // Sortir de la boucle une fois le pseudo accepté
   }
-
-  // Add client to list
-  Client *client = &clients[nb_clients++];
-  client->socket = socket;
-  strncpy(client->pseudo, pseudo, MAX_PSEUDO_LENGTH - 1);
-  client->pseudo[MAX_PSEUDO_LENGTH - 1] = '\0';
-  client->is_playing = 0;
-  client->game_id = -1;
-  pthread_mutex_unlock(&clients_mutex);
-
-  // Send confirmation
-  const char *success_msg = "LOGIN_OK";
-  send(socket, success_msg, strlen(success_msg), 0);
-  printf("New client connected: %s\n", pseudo);
 
   while (1) {
     int n = read(socket, buffer, BUFFER_SIZE);
@@ -234,27 +257,59 @@ void *handle_client(void *arg) {
     } else if (strncmp(buffer, "GAMES", 5) == 0) {
       send_active_games(socket);
     } else if (strncmp(buffer, "CHALLENGE", 9) == 0) {
-      char opponent[MAX_PSEUDO_LENGTH];
-      sscanf(buffer, "CHALLENGE %s", opponent);
+        char opponent[MAX_PSEUDO_LENGTH];
+        char challenger_pseudo[MAX_PSEUDO_LENGTH];
+        sscanf(buffer, "CHALLENGE %s", opponent);
 
-      // Find opponent
-      pthread_mutex_lock(&clients_mutex);
-      int opponent_socket = -1;
-      for (int i = 0; i < nb_clients; i++) {
-        if (strcmp(clients[i].pseudo, opponent) == 0 &&
-            !clients[i].is_playing) {
-          opponent_socket = clients[i].socket;
-          break;
+        // Find opponent
+        pthread_mutex_lock(&clients_mutex);
+        int opponent_socket = -1;
+        int challenger_is_playing = 0;
+        
+        // Trouver d'abord le pseudo du challenger
+        for (int i = 0; i < nb_clients; i++) {
+            if (clients[i].socket == socket) {
+                strncpy(challenger_pseudo, clients[i].pseudo, MAX_PSEUDO_LENGTH - 1);
+                challenger_pseudo[MAX_PSEUDO_LENGTH - 1] = '\0';
+                if (clients[i].is_playing) {
+                    challenger_is_playing = 1;
+                }
+                break;
+            }
         }
-      }
-      pthread_mutex_unlock(&clients_mutex);
+        
+        if (challenger_is_playing) {
+            const char *error_msg = "ERROR Vous ne pouvez pas lancer de défi pendant une partie\n";
+            write(socket, error_msg, strlen(error_msg));
+            pthread_mutex_unlock(&clients_mutex);
+            continue;
+        }
 
-      if (opponent_socket != -1) {
-        char challenge[BUFFER_SIZE];
-        snprintf(challenge, BUFFER_SIZE, "CHALLENGE_FROM %s", pseudo);
-        write(opponent_socket, challenge, strlen(challenge));
-      }
-    } else if (strncmp(buffer, "ACCEPT", 6) == 0) {
+        // Chercher l'adversaire
+        for (int i = 0; i < nb_clients; i++) {
+            if (strcmp(clients[i].pseudo, opponent) == 0) {
+                if (clients[i].is_playing) {
+                    const char *error_msg = "ERROR Ce joueur est déjà en partie\n";
+                    write(socket, error_msg, strlen(error_msg));
+                    opponent_socket = -2; // Pour indiquer qu'on a trouvé le joueur mais qu'il est occupé
+                } else {
+                    opponent_socket = clients[i].socket;
+                }
+                break;
+            }
+        }
+        pthread_mutex_unlock(&clients_mutex);
+
+        if (opponent_socket == -1) {
+            const char *error_msg = "ERROR Joueur non trouvé\n";
+            write(socket, error_msg, strlen(error_msg));
+        } else if (opponent_socket >= 0) {  // Si le joueur est trouvé et n'est pas en partie
+            char challenge[BUFFER_SIZE];
+            snprintf(challenge, BUFFER_SIZE, "CHALLENGE_FROM %s", challenger_pseudo);
+            write(opponent_socket, challenge, strlen(challenge));
+        }
+    }
+    else if (strncmp(buffer, "ACCEPT", 6) == 0) {
       char challenger[MAX_PSEUDO_LENGTH];
       sscanf(buffer, "ACCEPT %s", challenger);
 
