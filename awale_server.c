@@ -203,6 +203,10 @@ void send_message(int socket, char *buffer) {
 
       // Formater le message avec le pseudo de l'expéditeur
       char formatted_message[BUFFER_SIZE];
+      size_t message_len = strlen(message);
+      if (message_len > BUFFER_SIZE - 100) { // 100 pour la marge des autres éléments
+          message[BUFFER_SIZE - 100] = '\0';  // Tronquer le message si trop long
+      }
       snprintf(formatted_message, BUFFER_SIZE,
                "MESSAGE message de %s%s%s: %s\n", GREEN_TEXT, expediteur,
                RESET_COLOR, message);

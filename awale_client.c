@@ -47,14 +47,7 @@ typedef struct {
 
 InfoPartie parties[MAX_PARTIES];
 
-typedef struct {
-  int socket;
-  unsigned int numero_joueur;
-  char pseudo[TAILLE_MAX_PSEUDO];
-  Awale jeu;
-} DonneesClient;
-
-void envoyer_historique_partie(int socket_fd, DonneesClient *donnees) {
+void envoyer_historique_partie(int socket_fd __attribute__((unused)), DonneesClient *donnees) {
   char buffer[TAILLE_BUFFER];
   // format de la commande: HISTORY <pseudo1 = gagnant> <pseudo2 = perdant>
   // <score joueur 1> <score joueur 2>
@@ -214,6 +207,10 @@ void gerer_message(int socket_fd, char *buffer) {
   char message[TAILLE_BUFFER];
 
   if (sscanf(buffer, "/message %s %[^\n]", pseudo, message) == 2) {
+    size_t message_len = strlen(message);
+    if (message_len > TAILLE_BUFFER - 50) {
+      message[TAILLE_BUFFER - 50] = '\0';
+    }
     snprintf(buffer, TAILLE_BUFFER, "MESSAGE %s %s", pseudo, message);
     envoyer_commande_simple(socket_fd, buffer);
   } else {
@@ -229,6 +226,28 @@ void gerer_coup(int socket_fd, char* buffer, DonneesClient* donnees) {
     } else {
         printf("Coup invalide, choisissez une case entre 1 et 6 contenant des graines\n");
     }
+}
+
+// Fonction pour vérifier si un joueur est en partie
+int est_en_partie(DonneesClient *donnees) {
+    return donnees->numero_joueur == 1 || donnees->numero_joueur == 2;
+}
+
+// Fonction de nettoyage
+void cleanup() {
+    // Libération des ressources si nécessaire
+}
+
+// Gestionnaire de signal
+void gestionnaire_signal(int signum) {
+    printf("\nSignal %d reçu. Nettoyage et fermeture...\n", signum);
+    if (descripteur_socket_global != -1) {
+        close(descripteur_socket_global);
+    }
+    if (donnees_globales != NULL) {
+        free(donnees_globales);
+    }
+    exit(signum);
 }
 
 int main(int argc, char **argv) {
@@ -369,7 +388,8 @@ int main(int argc, char **argv) {
             gerer_message(descripteur_socket, buffer);
         }
         else if (strncmp(buffer, "/history", 9) == 0) {
-      envoyer_commande_simple(descripteur_socket, "HISTORY");
+            envoyer_commande_simple(descripteur_socket, "HISTORY");
+        }
         else if (strcmp(buffer, "/quit") == 0) {
             if (est_en_partie(donnees)) {
                 envoyer_commande_simple(descripteur_socket, "FORFEIT");
