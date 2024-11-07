@@ -28,95 +28,152 @@ static DonneesClient *donnees_globales = NULL;
 static int descripteur_socket_global = -1;
 
 void afficher_aide() {
-    printf("\nCommandes disponibles:\n");
-    printf("/list - Liste des joueurs disponibles\n");
-    printf("/games - Liste des parties en cours\n");
-    printf("/challenge <pseudo> - Défier un joueur\n");
-    printf("/observe <id_partie> - Observer une partie\n");
-    printf("/message <pseudo || all> <message> - Envoyer un message\n");
-    printf("/quit - Quitter le jeu\n");
-    printf("/forfeit ou /ff - Abandonner la partie en cours\n");
-    printf("1-6 - Jouer un coup (pendant une partie)\n\n");
+  printf("\nCommandes disponibles:\n");
+  printf("/list - Liste des joueurs disponibles\n");
+  printf("/games - Liste des parties en cours\n");
+  printf("/challenge <pseudo> - Défier un joueur\n");
+  printf("/observe <id_partie> - Observer une partie\n");
+  printf("/message <pseudo || all> <message> - Envoyer un message\n");
+  printf("/history - Historique des parties\n");
+  printf("/quit - Quitter le jeu\n");
+  printf("/forfeit ou /ff - Abandonner la partie en cours\n");
+  printf("1-6 - Jouer un coup (pendant une partie)\n\n");
 }
 
 typedef struct {
-    char joueur1[TAILLE_MAX_PSEUDO];
-    char joueur2[TAILLE_MAX_PSEUDO];
+  char joueur1[TAILLE_MAX_PSEUDO];
+  char joueur2[TAILLE_MAX_PSEUDO];
 } InfoPartie;
 
 InfoPartie parties[MAX_PARTIES];
 
-void *recevoir_messages(void *arg) {
-    DonneesClient *donnees = (DonneesClient *)arg;
-    char buffer[TAILLE_BUFFER];
+typedef struct {
+  int socket;
+  unsigned int numero_joueur;
+  char pseudo[TAILLE_MAX_PSEUDO];
+  Awale jeu;
+} DonneesClient;
 
-    while (1) {
-        memset(buffer, 0, TAILLE_BUFFER);
-        int n = read(donnees->socket, buffer, TAILLE_BUFFER);
-        if (n <= 0) break;
-        buffer[n] = 0;
-
-        char *pos_etat_jeu = strstr(buffer, "GAMESTATE");
-        if (pos_etat_jeu != NULL) {
-            printf("Message reçu contenant GAMESTATE: %s\n", buffer);
-
-            if (donnees->numero_joueur == 0) {
-                char joueur1[TAILLE_MAX_PSEUDO];
-                char joueur2[TAILLE_MAX_PSEUDO];
-                strncpy(donnees->jeu.pseudo1, joueur1, TAILLE_MAX_PSEUDO - 1);
-                donnees->jeu.pseudo1[TAILLE_MAX_PSEUDO - 1] = '\0';
-                strncpy(donnees->jeu.pseudo2, joueur2, TAILLE_MAX_PSEUDO - 1);
-                donnees->jeu.pseudo2[TAILLE_MAX_PSEUDO - 1] = '\0';
-
-                if (sscanf(buffer, "GAMESTATE %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %s %s",
-                          joueur1, joueur2) == 2) {
-                    printf("Joueurs détectés: %s vs %s\n", joueur1, joueur2);
-                    if (strcmp(donnees->pseudo, joueur1) == 0) {
-                        donnees->numero_joueur = 1;
-                    } else if (strcmp(donnees->pseudo, joueur2) == 0) {
-                        donnees->numero_joueur = 2;
-                    } else {
-                        donnees->numero_joueur = 3;
-                    }
-                    printf("Numéro de joueur assigné: %d\n", donnees->numero_joueur);
-                }
-            }
-
-            deserialiser_jeu(&donnees->jeu, pos_etat_jeu);
-            afficher_plateau(&donnees->jeu, donnees->numero_joueur);
-
-            if (donnees->jeu.fini) {
-                if (donnees->jeu.gagnant == donnees->numero_joueur) {
-                    printf("\nFélicitations ! Vous avez gagné !\n");
-                } else if (donnees->jeu.gagnant > 0) {
-                    printf("\nVous avez perdu.\n");
-                } else {
-                    printf("\nMatch nul !\n");
-                }
-            } else if (donnees->jeu.joueurCourant == donnees->numero_joueur) {
-                printf("\nC'est votre tour ! Choisissez un trou (1-6):\n");
-            } else {
-                printf("\nEn attente du coup de l'adversaire...\n");
-            }
-        } else if (strncmp(buffer, "PLAYERS", 7) == 0) {
-            printf("\nJoueurs disponibles:\n%s\n", buffer + 8);
-        } else if (strncmp(buffer, "GAMES", 5) == 0) {
-            printf("\nParties en cours:\n%s\n", buffer + 6);
-        } else if (strncmp(buffer, "CHALLENGE_FROM", 13) == 0) {
-            char adversaire[TAILLE_MAX_PSEUDO];
-            sscanf(buffer, "CHALLENGE_FROM %s", adversaire);
-            printf("\nDéfi reçu de %s! Tapez '/accept %s' pour accepter\n", adversaire, adversaire);
-        } else if (strncmp(buffer, "ERROR", 5) == 0) {
-            printf("\n%s%s%s", RED_TEXT, buffer + 6, RESET_COLOR);
-        } else if (strncmp(buffer, "MESSAGE", 7) == 0) {
-            printf("\n%s", buffer + 7);
-        }
-    }
-    return NULL;
+void envoyer_historique_partie(int socket_fd, DonneesClient *donnees) {
+  char buffer[TAILLE_BUFFER];
+  // format de la commande: HISTORY <pseudo1 = gagnant> <pseudo2 = perdant>
+  // <score joueur 1> <score joueur 2>
+  snprintf(buffer, TAILLE_BUFFER, "ADD_HISTORY %s %s %d %d",
+           donnees->jeu.pseudo1, donnees->jeu.pseudo2, donnees->jeu.scoreJ1,
+           donnees->jeu.scoreJ2);
 }
 
-void envoyer_commande_simple(int socket_fd, const char* commande) {
-    write(socket_fd, commande, strlen(commande));
+void afficher_historique(char *buffer) {
+  // Si aucune partie n'a été jouée
+  if (strstr(buffer, "HISTORY NONE") != NULL) {
+    printf("Aucune partie n'a été jouée.\n");
+    return;
+  }
+
+  // Ignorer le préfixe "HISTORY "
+  char *parties = buffer + 8;
+  char *partie;
+
+  printf("\n=== Historique des parties ===\n");
+
+  // Utiliser strtok pour séparer les parties (délimiteur '|')
+  partie = strtok(parties, "|");
+  while (partie != NULL) {
+    char gagnant[TAILLE_MAX_PSEUDO];
+    char perdant[TAILLE_MAX_PSEUDO];
+    unsigned int score1, score2;
+
+    if (sscanf(partie, "%s %s %u %u", gagnant, perdant, &score1, &score2) ==
+        4) {
+      printf("%s%s%s a gagné contre %s%s%s (%u - %u)\n", GREEN_TEXT, gagnant,
+             RESET_COLOR,                    // Gagnant en vert
+             RED_TEXT, perdant, RESET_COLOR, // Perdant en rouge
+             score1, score2);
+    }
+
+    partie = strtok(NULL, "|");
+  }
+  printf("\n");
+}
+
+void *recevoir_messages(void *arg) {
+  DonneesClient *donnees = (DonneesClient *)arg;
+  char buffer[TAILLE_BUFFER];
+
+  while (1) {
+    memset(buffer, 0, TAILLE_BUFFER);
+    int n = read(donnees->socket, buffer, TAILLE_BUFFER);
+    if (n <= 0)
+      break;
+    buffer[n] = 0;
+
+    char *pos_etat_jeu = strstr(buffer, "GAMESTATE");
+    if (pos_etat_jeu != NULL) {
+      printf("Message reçu contenant GAMESTATE: %s\n", buffer);
+
+      if (donnees->numero_joueur == 0) {
+        char joueur1[TAILLE_MAX_PSEUDO];
+        char joueur2[TAILLE_MAX_PSEUDO];
+        strncpy(donnees->jeu.pseudo1, joueur1, TAILLE_MAX_PSEUDO - 1);
+        donnees->jeu.pseudo1[TAILLE_MAX_PSEUDO - 1] = '\0';
+        strncpy(donnees->jeu.pseudo2, joueur2, TAILLE_MAX_PSEUDO - 1);
+        donnees->jeu.pseudo2[TAILLE_MAX_PSEUDO - 1] = '\0';
+
+        if (sscanf(buffer,
+                   "GAMESTATE %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d %*d "
+                   "%*d %*d %*d %*d %*d %s %s",
+                   joueur1, joueur2) == 2) {
+          printf("Joueurs détectés: %s vs %s\n", joueur1, joueur2);
+          if (strcmp(donnees->pseudo, joueur1) == 0) {
+            donnees->numero_joueur = 1;
+          } else if (strcmp(donnees->pseudo, joueur2) == 0) {
+            donnees->numero_joueur = 2;
+          } else {
+            donnees->numero_joueur = 3;
+          }
+          printf("Numéro de joueur assigné: %d\n", donnees->numero_joueur);
+        }
+      }
+
+      deserialiser_jeu(&donnees->jeu, pos_etat_jeu);
+      afficher_plateau(&donnees->jeu, donnees->numero_joueur);
+
+      if (donnees->jeu.fini) {
+        if (donnees->jeu.gagnant == donnees->numero_joueur) {
+          printf("\nFélicitations ! Vous avez gagné !\n");
+          envoyer_historique_partie(donnees->socket, donnees);
+        } else if (donnees->jeu.gagnant > 0) {
+          printf("\nVous avez perdu.\n");
+        } else {
+          printf("\nMatch nul !\n");
+        }
+      } else if (donnees->jeu.joueurCourant == donnees->numero_joueur) {
+        printf("\nC'est votre tour ! Choisissez un trou (1-6):\n");
+      } else {
+        printf("\nEn attente du coup de l'adversaire...\n");
+      }
+    } else if (strncmp(buffer, "PLAYERS", 7) == 0) {
+      printf("\nJoueurs disponibles:\n%s\n", buffer + 8);
+    } else if (strncmp(buffer, "GAMES", 5) == 0) {
+      printf("\nParties en cours:\n%s\n", buffer + 6);
+    } else if (strncmp(buffer, "CHALLENGE_FROM", 13) == 0) {
+      char adversaire[TAILLE_MAX_PSEUDO];
+      sscanf(buffer, "CHALLENGE_FROM %s", adversaire);
+      printf("\nDéfi reçu de %s! Tapez '/accept %s' pour accepter\n",
+             adversaire, adversaire);
+    } else if (strncmp(buffer, "ERROR", 5) == 0) {
+        printf("\n%s%s%s", RED_TEXT, buffer + 6, RESET_COLOR);
+    } else if (strncmp(buffer, "MESSAGE", 7) == 0) {
+      printf("\n%s", buffer + 7);
+    } else if (strncmp(buffer, "HISTORY", 7) == 0) {
+      afficher_historique(buffer);
+    }
+  }
+  return NULL;
+}
+
+void envoyer_commande_simple(int socket_fd, const char *commande) {
+  write(socket_fd, commande, strlen(commande));
 }
 
 void gerer_defi(int socket_fd, char* buffer) {
@@ -141,27 +198,27 @@ void gerer_acceptation(int socket_fd, char* buffer) {
     }
 }
 
-void gerer_observation(int socket_fd, char* buffer) {
-    int id_partie;
-    if (sscanf(buffer, "/observe %d", &id_partie) == 1) {
-        snprintf(buffer, TAILLE_BUFFER, "OBSERVE %d", id_partie);
-        envoyer_commande_simple(socket_fd, buffer);
-        printf("Mode observation activé pour la partie %d\n", id_partie);
-    } else {
-        printf("Usage: /observe <id_partie>\n");
-    }
+void gerer_observation(int socket_fd, char *buffer) {
+  int id_partie;
+  if (sscanf(buffer, "/observe %d", &id_partie) == 1) {
+    snprintf(buffer, TAILLE_BUFFER, "OBSERVE %d", id_partie);
+    envoyer_commande_simple(socket_fd, buffer);
+    printf("Mode observation activé pour la partie %d\n", id_partie);
+  } else {
+    printf("Usage: /observe <id_partie>\n");
+  }
 }
 
-void gerer_message(int socket_fd, char* buffer) {
-    char pseudo[TAILLE_MAX_PSEUDO];
-    char message[TAILLE_BUFFER];
-    
-    if (sscanf(buffer, "/message %s %[^\n]", pseudo, message) == 2) {
-        snprintf(buffer, TAILLE_BUFFER, "MESSAGE %s %s", pseudo, message);
-        envoyer_commande_simple(socket_fd, buffer);
-    } else {
-        printf("Usage: /message <pseudo> <message>\n");
-    }
+void gerer_message(int socket_fd, char *buffer) {
+  char pseudo[TAILLE_MAX_PSEUDO];
+  char message[TAILLE_BUFFER];
+
+  if (sscanf(buffer, "/message %s %[^\n]", pseudo, message) == 2) {
+    snprintf(buffer, TAILLE_BUFFER, "MESSAGE %s %s", pseudo, message);
+    envoyer_commande_simple(socket_fd, buffer);
+  } else {
+    printf("Usage: /message <pseudo> <message>\n");
+  }
 }
 
 void gerer_coup(int socket_fd, char* buffer, DonneesClient* donnees) {
@@ -174,49 +231,30 @@ void gerer_coup(int socket_fd, char* buffer, DonneesClient* donnees) {
     }
 }
 
-int est_en_partie(DonneesClient *donnees) {
-    return donnees->numero_joueur == 1 || donnees->numero_joueur == 2;
-}
-
-void cleanup() {
-    if (donnees_globales && descripteur_socket_global != -1) {
-        if (est_en_partie(donnees_globales)) {
-            envoyer_commande_simple(descripteur_socket_global, "FORFEIT");
-        }
-        close(descripteur_socket_global);
-    }
-    free(donnees_globales);
-}
-
-void gestionnaire_signal(int signum) {
-    printf("\nSignal %d reçu, nettoyage en cours...\n", signum);
-    cleanup();
-    exit(signum);
-}
-
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        printf("Usage: %s ip_serveur port\n", argv[0]);
-        return 1;
-    }
+  if (argc != 3) {
+    printf("Usage: %s ip_serveur port\n", argv[0]);
+    return 1;
+  }
 
-    int descripteur_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (descripteur_socket < 0) {
-        perror("Échec de création de la socket");
-        return 1;
-    }
+  int descripteur_socket = socket(AF_INET, SOCK_STREAM, 0);
+  if (descripteur_socket < 0) {
+    perror("Échec de création de la socket");
+    return 1;
+  }
 
-    struct sockaddr_in adresse_serveur;
-    memset(&adresse_serveur, 0, sizeof(adresse_serveur));
-    adresse_serveur.sin_family = AF_INET;
-    adresse_serveur.sin_addr.s_addr = inet_addr(argv[1]);
-    adresse_serveur.sin_port = htons(atoi(argv[2]));
+  struct sockaddr_in adresse_serveur;
+  memset(&adresse_serveur, 0, sizeof(adresse_serveur));
+  adresse_serveur.sin_family = AF_INET;
+  adresse_serveur.sin_addr.s_addr = inet_addr(argv[1]);
+  adresse_serveur.sin_port = htons(atoi(argv[2]));
 
-    if (connect(descripteur_socket, (struct sockaddr *)&adresse_serveur, sizeof(adresse_serveur)) < 0) {
-        perror("Échec de connexion");
-        close(descripteur_socket);
-        return 1;
-    }
+  if (connect(descripteur_socket, (struct sockaddr *)&adresse_serveur,
+              sizeof(adresse_serveur)) < 0) {
+    perror("Échec de connexion");
+    close(descripteur_socket);
+    return 1;
+  }
 
     char pseudo[TAILLE_MAX_PSEUDO];
     char buffer[TAILLE_BUFFER];
@@ -259,15 +297,15 @@ int main(int argc, char **argv) {
         }
     }
 
-    printf("Connecté au serveur! Tapez /help pour la liste des commandes\n");
+  printf("Connecté au serveur! Tapez /help pour la liste des commandes\n");
 
-    DonneesClient *donnees = malloc(sizeof(DonneesClient));
-    donnees->socket = descripteur_socket;
-    strncpy(donnees->pseudo, pseudo, TAILLE_MAX_PSEUDO - 1);
-    donnees->pseudo[TAILLE_MAX_PSEUDO - 1] = '\0';
-    donnees->numero_joueur = 0;
+  DonneesClient *donnees = malloc(sizeof(DonneesClient));
+  donnees->socket = descripteur_socket;
+  strncpy(donnees->pseudo, pseudo, TAILLE_MAX_PSEUDO - 1);
+  donnees->pseudo[TAILLE_MAX_PSEUDO - 1] = '\0';
+  donnees->numero_joueur = 0;
 
-    init_awale(&donnees->jeu, "vide", "vide");
+  init_awale(&donnees->jeu, "vide", "vide");
 
     pthread_t thread_reception;
     pthread_create(&thread_reception, NULL, recevoir_messages, donnees);
@@ -305,9 +343,9 @@ int main(int argc, char **argv) {
     descripteur_socket_global = descripteur_socket;
     donnees_globales = donnees;
 
-    while (1) {
-        fgets(buffer, TAILLE_BUFFER, stdin);
-        buffer[strcspn(buffer, "\n")] = 0;
+  while (1) {
+    fgets(buffer, TAILLE_BUFFER, stdin);
+    buffer[strcspn(buffer, "\n")] = 0;
 
         if (strcmp(buffer, "/help") == 0) {
             afficher_aide();
@@ -330,6 +368,8 @@ int main(int argc, char **argv) {
         else if (strncmp(buffer, "/message", 8) == 0) {
             gerer_message(descripteur_socket, buffer);
         }
+        else if (strncmp(buffer, "/history", 9) == 0) {
+      envoyer_commande_simple(descripteur_socket, "HISTORY");
         else if (strcmp(buffer, "/quit") == 0) {
             if (est_en_partie(donnees)) {
                 envoyer_commande_simple(descripteur_socket, "FORFEIT");
