@@ -46,6 +46,11 @@ typedef struct {
   unsigned int score_player2;
 } HistoriqueParties;
 
+typedef struct {
+    char challenger[MAX_PSEUDO_LENGTH];
+    char challenged[MAX_PSEUDO_LENGTH];
+} Challenge;
+
 Client clients[MAX_CLIENTS];
 Game games[MAX_GAMES];
 int nb_clients = 0;
@@ -55,6 +60,9 @@ int nb_historique = 0;
 pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t games_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t historique_mutex = PTHREAD_MUTEX_INITIALIZER;
+Challenge pending_challenges[MAX_CLIENTS];
+int nb_challenges = 0;
+pthread_mutex_t challenges_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 void broadcast_game_state(Game *game) {
   // Buffer pour stocker l'état complet
@@ -305,6 +313,50 @@ void send_game_state_to_observer(Game *game, int observer_socket) {
     write(observer_socket, full_state, strlen(full_state));
 }
 
+// Vérifie si un défi est en attente entre deux joueurs
+int challenge_exists(const char* challenger, const char* challenged) {
+    pthread_mutex_lock(&challenges_mutex);
+    for (int i = 0; i < nb_challenges; i++) {
+        if (strcmp(pending_challenges[i].challenger, challenger) == 0 && 
+            strcmp(pending_challenges[i].challenged, challenged) == 0) {
+            pthread_mutex_unlock(&challenges_mutex);
+            return 1;
+        }
+    }
+    pthread_mutex_unlock(&challenges_mutex);
+    return 0;
+}
+
+// Ajoute un nouveau défi
+void add_challenge(const char* challenger, const char* challenged) {
+    pthread_mutex_lock(&challenges_mutex);
+    if (nb_challenges < MAX_CLIENTS) {
+        strncpy(pending_challenges[nb_challenges].challenger, challenger, MAX_PSEUDO_LENGTH - 1);
+        strncpy(pending_challenges[nb_challenges].challenged, challenged, MAX_PSEUDO_LENGTH - 1);
+        pending_challenges[nb_challenges].challenger[MAX_PSEUDO_LENGTH - 1] = '\0';
+        pending_challenges[nb_challenges].challenged[MAX_PSEUDO_LENGTH - 1] = '\0';
+        nb_challenges++;
+    }
+    pthread_mutex_unlock(&challenges_mutex);
+}
+
+// Supprime un défi
+void remove_challenge(const char* challenger, const char* challenged) {
+    pthread_mutex_lock(&challenges_mutex);
+    for (int i = 0; i < nb_challenges; i++) {
+        if (strcmp(pending_challenges[i].challenger, challenger) == 0 && 
+            strcmp(pending_challenges[i].challenged, challenged) == 0) {
+            // Déplacer le dernier défi à cette position
+            if (i < nb_challenges - 1) {
+                pending_challenges[i] = pending_challenges[nb_challenges - 1];
+            }
+            nb_challenges--;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&challenges_mutex);
+}
+
 void *handle_client(void *arg) {
   int socket = *(int *)arg;
   char buffer[BUFFER_SIZE];
@@ -376,7 +428,6 @@ void *handle_client(void *arg) {
         char challenger_pseudo[MAX_PSEUDO_LENGTH];
         sscanf(buffer, "CHALLENGE %s", opponent);
 
-        // Find opponent
         pthread_mutex_lock(&clients_mutex);
         int opponent_socket = -1;
         int challenger_is_playing = 0;
@@ -427,61 +478,68 @@ void *handle_client(void *arg) {
             const char *error_msg = "ERROR Joueur non trouvé\n";
             write(socket, error_msg, strlen(error_msg));
         } else if (opponent_socket >= 0) {  // Si le joueur est trouvé et n'est pas en partie
+            add_challenge(challenger_pseudo, opponent);
             char challenge[BUFFER_SIZE];
             snprintf(challenge, BUFFER_SIZE, "CHALLENGE_FROM %s", challenger_pseudo);
             write(opponent_socket, challenge, strlen(challenge));
         }
     }
     else if (strncmp(buffer, "ACCEPT", 6) == 0) {
-      char challenger[MAX_PSEUDO_LENGTH];
-      sscanf(buffer, "ACCEPT %s", challenger);
+        char challenger[MAX_PSEUDO_LENGTH];
+        char accepter_pseudo[MAX_PSEUDO_LENGTH];
+        sscanf(buffer, "ACCEPT %s", challenger);
 
-      // Vérifier si le joueur essaie d'accepter son propre défi
-      pthread_mutex_lock(&clients_mutex);
-      int is_self_accept = 0;
-      for (int i = 0; i < nb_clients; i++) {
-          if (clients[i].socket == socket) {
-              if (strcmp(clients[i].pseudo, challenger) == 0) {
-                  is_self_accept = 1;
-                  const char *error_msg = "ERROR Vous ne pouvez pas accepter votre propre défi\n";
-                  write(socket, error_msg, strlen(error_msg));
-              }
-              break;
-          }
-      }
-      pthread_mutex_unlock(&clients_mutex);
+        // Trouver le pseudo de celui qui accepte
+        pthread_mutex_lock(&clients_mutex);
+        for (int i = 0; i < nb_clients; i++) {
+            if (clients[i].socket == socket) {
+                strncpy(accepter_pseudo, clients[i].pseudo, MAX_PSEUDO_LENGTH - 1);
+                accepter_pseudo[MAX_PSEUDO_LENGTH - 1] = '\0';
+                break;
+            }
+        }
+        pthread_mutex_unlock(&clients_mutex);
 
-      if (is_self_accept) {
-          continue;
-      }
+        // Vérifier si le défi existe
+        if (!challenge_exists(challenger, accepter_pseudo)) {
+            const char *error_msg = "ERROR Aucun défi en attente de ce joueur\n";
+            write(socket, error_msg, strlen(error_msg));
+            continue;
+        }
 
-      // Create new game
-      pthread_mutex_lock(&games_mutex);
-      Game *game = &games[nb_games++];
-      pthread_mutex_unlock(&games_mutex);
+        // Créer la partie et initialiser le jeu
+        pthread_mutex_lock(&clients_mutex);
+        pthread_mutex_lock(&games_mutex);
+        
+        int challenger_socket = -1;
+        for (int i = 0; i < nb_clients; i++) {
+            if (strcmp(clients[i].pseudo, challenger) == 0) {
+                challenger_socket = clients[i].socket;
+                clients[i].is_playing = 1;
+                clients[i].game_id = nb_games;
+                break;
+            }
+        }
+        
+        for (int i = 0; i < nb_clients; i++) {
+            if (clients[i].socket == socket) {
+                clients[i].is_playing = 1;
+                clients[i].game_id = nb_games;
+                break;
+            }
+        }
 
-      // Find challenger socket
-      pthread_mutex_lock(&clients_mutex);
-      int challenger_socket = -1;
-      for (int i = 0; i < nb_clients; i++) {
-          if (strcmp(clients[i].pseudo, challenger) == 0) {
-              challenger_socket = clients[i].socket;
-              clients[i].is_playing = 1;
-              clients[i].game_id = nb_games - 1;
-              break;
-          }
-      }
-      for (int i = 0; i < nb_clients; i++) {
-          if (clients[i].socket == socket) {
-              clients[i].is_playing = 1;
-              clients[i].game_id = nb_games - 1;
-              break;
-          }
-      }
-      pthread_mutex_unlock(&clients_mutex);
+        Game *game = &games[nb_games++];
+        init_game(game, challenger, accepter_pseudo, challenger_socket, socket);
+        
+        pthread_mutex_unlock(&games_mutex);
+        pthread_mutex_unlock(&clients_mutex);
 
-      init_game(game, challenger, pseudo, challenger_socket, socket);
-      broadcast_game_state(game);
+        // Supprimer le défi des défis en attente
+        remove_challenge(challenger, accepter_pseudo);
+
+        // Diffuser l'état initial du jeu
+        broadcast_game_state(game);
     } else if (strncmp(buffer, "OBSERVE", 7) == 0) {
       int game_id;
       sscanf(buffer, "OBSERVE %d", &game_id);
