@@ -20,6 +20,7 @@
 #define GREEN_TEXT "\033[32m"
 #define RED_TEXT "\033[31m"
 #define MAX_HISTORIQUE 100
+#define MAX_PRIVATE_OBSERVERS 10
 
 typedef struct {
   int socket;
@@ -27,6 +28,10 @@ typedef struct {
   char bio[MAX_MESSAGE_LENGTH];
   int is_playing;
   int game_id;
+  char private_observers[MAX_PRIVATE_OBSERVERS][MAX_PSEUDO_LENGTH];
+  int nb_private_observers;
+  int is_private; // 1 si le client est privé, 0 sinon (si privé, que les
+                  // observateurs de la liste privée peuvent voir la partie)
 } Client;
 
 typedef struct {
@@ -79,10 +84,6 @@ void broadcast_game_state(Game *game) {
       game->jeu.plateau[9], game->jeu.plateau[10], game->jeu.plateau[11],
       game->jeu.scoreJ1, game->jeu.scoreJ2, game->jeu.joueurCourant,
       game->jeu.fini, game->jeu.gagnant, game->jeu.pseudo1, game->jeu.pseudo2);
-
-  printf("Broadcasting game state: %s\n", full_state);
-  printf("socket1: %d\n", game->socket1);
-  printf("socket2: %d\n", game->socket2);
 
   // Envoyer aux joueurs
   write(game->socket1, full_state, strlen(full_state));
@@ -229,6 +230,219 @@ void regarder_bio(int socket, const char *target_pseudo) {
   snprintf(error_msg, BUFFER_SIZE, "ERROR %sJoueur %s non trouvé%s\n", RED_TEXT,
            target_pseudo, RESET_COLOR);
   write(socket, error_msg, strlen(error_msg));
+}
+
+void ajouter_observateur_prive(int socket, const char *target_pseudo) {
+  pthread_mutex_lock(&clients_mutex);
+  Client *owner = NULL;
+  Client *target = NULL;
+
+  // Trouver le propriétaire et la cible
+  for (int i = 0; i < nb_clients; i++) {
+    if (clients[i].socket == socket) {
+      owner = &clients[i];
+    }
+    if (strcmp(clients[i].pseudo, target_pseudo) == 0) { // Retiré le else
+      target = &clients[i];
+    }
+  }
+
+  if (!owner || !target) {
+    char error_msg[BUFFER_SIZE];
+    snprintf(error_msg, BUFFER_SIZE, "ERROR %sJoueur non trouvé%s\n", RED_TEXT,
+             RESET_COLOR);
+    write(socket, error_msg, strlen(error_msg));
+    pthread_mutex_unlock(&clients_mutex);
+    return;
+  }
+
+  // Verifier que la cible n'est pas le proprietaire
+  if (strcmp(owner->pseudo, target_pseudo) == 0) {
+    char error_msg[BUFFER_SIZE];
+    snprintf(
+        error_msg, BUFFER_SIZE,
+        "ERROR %sVous ne pouvez pas vous ajouter comme observateur privé%s\n",
+        RED_TEXT, RESET_COLOR);
+    write(socket, error_msg, strlen(error_msg));
+    pthread_mutex_unlock(&clients_mutex);
+    return;
+  }
+
+  // Vérifier si l'observateur est déjà dans la liste
+  for (int i = 0; i < owner->nb_private_observers; i++) {
+    if (strcmp(owner->private_observers[i], target_pseudo) == 0) {
+      char error_msg[BUFFER_SIZE];
+      snprintf(error_msg, BUFFER_SIZE,
+               "ERROR %s%s est déjà dans votre liste d'observateurs privés%s\n",
+               RED_TEXT, target_pseudo, RESET_COLOR);
+      write(socket, error_msg, strlen(error_msg));
+      pthread_mutex_unlock(&clients_mutex);
+      return;
+    }
+  }
+
+  // Vérifier si la liste n'est pas pleine
+  if (owner->nb_private_observers >= MAX_PRIVATE_OBSERVERS) {
+    char error_msg[BUFFER_SIZE];
+    snprintf(error_msg, BUFFER_SIZE,
+             "ERROR %sListe d'observateurs privés pleine%s\n", RED_TEXT,
+             RESET_COLOR);
+    write(socket, error_msg, strlen(error_msg));
+    pthread_mutex_unlock(&clients_mutex);
+    return;
+  }
+
+  // Ajouter l'observateur
+  strncpy(owner->private_observers[owner->nb_private_observers], target_pseudo,
+          MAX_PSEUDO_LENGTH - 1);
+  owner->private_observers[owner->nb_private_observers][MAX_PSEUDO_LENGTH - 1] =
+      '\0';
+  owner->nb_private_observers++;
+
+  char success_msg[BUFFER_SIZE];
+  snprintf(success_msg, BUFFER_SIZE,
+           "PRIVATE_OBSERVER_ADDED %s%s a été ajouté à votre liste "
+           "d'observateurs privés%s\n",
+           GREEN_TEXT, target_pseudo, RESET_COLOR);
+  write(socket, success_msg, strlen(success_msg));
+
+  pthread_mutex_unlock(&clients_mutex);
+}
+
+void retirer_observateur_prive(int socket, const char *target_pseudo) {
+  pthread_mutex_lock(&clients_mutex);
+  Client *owner = NULL;
+  int found = 0;
+
+  // Trouver le propriétaire
+  for (int i = 0; i < nb_clients; i++) {
+    if (clients[i].socket == socket) {
+      owner = &clients[i];
+      break;
+    }
+  }
+
+  if (!owner) {
+    char error_msg[BUFFER_SIZE];
+    snprintf(error_msg, BUFFER_SIZE, "ERROR %sErreur interne%s\n", RED_TEXT,
+             RESET_COLOR);
+    write(socket, error_msg, strlen(error_msg));
+    pthread_mutex_unlock(&clients_mutex);
+    return;
+  }
+
+  // Chercher et retirer l'observateur
+  for (int i = 0; i < owner->nb_private_observers; i++) {
+    if (strcmp(owner->private_observers[i], target_pseudo) == 0) {
+      // Décaler les observateurs suivants
+      for (int j = i; j < owner->nb_private_observers - 1; j++) {
+        strncpy(owner->private_observers[j], owner->private_observers[j + 1],
+                MAX_PSEUDO_LENGTH);
+      }
+      owner->nb_private_observers--;
+      found = 1;
+      break;
+    }
+  }
+
+  if (!found) {
+    char error_msg[BUFFER_SIZE];
+    snprintf(error_msg, BUFFER_SIZE,
+             "ERROR %s%s n'est pas dans votre liste d'observateurs privés%s\n",
+             RED_TEXT, target_pseudo, RESET_COLOR);
+    write(socket, error_msg, strlen(error_msg));
+  } else {
+    char success_msg[BUFFER_SIZE];
+    snprintf(success_msg, BUFFER_SIZE,
+             "PRIVATE_OBSERVER_REMOVED %s%s a été retiré de votre liste "
+             "d'observateurs privés%s\n",
+             GREEN_TEXT, target_pseudo, RESET_COLOR);
+    write(socket, success_msg, strlen(success_msg));
+  }
+
+  pthread_mutex_unlock(&clients_mutex);
+}
+
+void lister_observateurs_prives(int socket) {
+  pthread_mutex_lock(&clients_mutex);
+  int owner_index = -1;
+
+  // Trouver le propriétaire
+  for (int i = 0; i < nb_clients; i++) {
+    if (clients[i].socket == socket) {
+      owner_index = i;
+      break;
+    }
+  }
+
+  if (owner_index == -1) {
+    pthread_mutex_unlock(&clients_mutex);
+    char error_msg[BUFFER_SIZE];
+    snprintf(error_msg, BUFFER_SIZE, "ERROR %sErreur interne%s\n", RED_TEXT,
+             RESET_COLOR);
+    write(socket, error_msg, strlen(error_msg));
+    return;
+  }
+
+  // Préparer la liste
+  char response[BUFFER_SIZE] = "PRIVATE_OBSERVERS ";
+  if (clients[owner_index].nb_private_observers == 0) {
+    strcat(response, "Aucun observateur privé dans votre liste, vous pouvez en "
+                     "ajouter avec /add-private-observer <pseudo>\n");
+  } else {
+    printf("je suis dans le cas où il y a des observateurs privés\n");
+    for (int i = 0; i < clients[owner_index].nb_private_observers; i++) {
+      strcat(response, clients[owner_index].private_observers[i]);
+      if (i < clients[owner_index].nb_private_observers - 1) {
+        strcat(response, ", ");
+      }
+    }
+  }
+  strcat(response, "\n");
+  printf("response : %s\n", response);
+  write(socket, response, strlen(response));
+
+  pthread_mutex_unlock(&clients_mutex);
+}
+
+// mode 0 = public, mode 1 = privé
+void changer_mode_visibilite(int socket, int mode) {
+  pthread_mutex_lock(&clients_mutex);
+
+  // Trouver le client
+  for (int i = 0; i < nb_clients; i++) {
+    if (clients[i].socket == socket) {
+      clients[i].is_private = mode;
+
+      char success_msg[BUFFER_SIZE];
+      if (mode == 0) {
+        snprintf(
+            success_msg, BUFFER_SIZE,
+            "VISIBILITY_CHANGED Votre mode de visibilité a été changé en %s"
+            "publique%s\n",
+            GREEN_TEXT, RESET_COLOR);
+      } else if (mode == 1) {
+        snprintf(
+            success_msg, BUFFER_SIZE,
+            "VISIBILITY_CHANGED Votre mode de visibilité a été changé en %s"
+            "privé%s\n",
+            RED_TEXT, RESET_COLOR);
+      }
+
+      pthread_mutex_unlock(&clients_mutex);
+      write(socket, success_msg, strlen(success_msg));
+      return;
+    }
+  }
+
+  // Si on arrive ici, le client n'a pas été trouvé
+  char error_msg[BUFFER_SIZE];
+  snprintf(error_msg, BUFFER_SIZE,
+           "ERROR %sErreur lors du changement de mode%s\n", RED_TEXT,
+           RESET_COLOR);
+  write(socket, error_msg, strlen(error_msg));
+
+  pthread_mutex_unlock(&clients_mutex);
 }
 
 void send_message(int socket, char *buffer) {
@@ -465,6 +679,15 @@ void *handle_client(void *arg) {
     client->socket = socket;
     strncpy(client->pseudo, pseudo, MAX_PSEUDO_LENGTH - 1);
     client->pseudo[MAX_PSEUDO_LENGTH - 1] = '\0';
+    client->nb_private_observers = 0;
+
+    for (int i = 0; i < MAX_PRIVATE_OBSERVERS; i++) {
+      client->private_observers[i][0] =
+          '\0'; // Initialise chaque chaîne comme vide
+    }
+
+    client->is_private = 0; // de base en public
+
     client->bio[0] = '\0';
     client->is_playing = 0;
     client->game_id = -1;
@@ -487,6 +710,22 @@ void *handle_client(void *arg) {
       send_free_players(socket);
     } else if (strncmp(buffer, "GAMES", 5) == 0) {
       send_active_games(socket);
+    } else if (strncmp(buffer, "ADD_PRIVATE_OBSERVER", 19) == 0) {
+      char target_pseudo[MAX_PSEUDO_LENGTH];
+      if (sscanf(buffer, "ADD_PRIVATE_OBSERVER %s", target_pseudo) == 1) {
+        ajouter_observateur_prive(socket, target_pseudo);
+      }
+    } else if (strncmp(buffer, "REMOVE_PRIVATE_OBSERVER", 22) == 0) {
+      char target_pseudo[MAX_PSEUDO_LENGTH];
+      if (sscanf(buffer, "REMOVE_PRIVATE_OBSERVER %s", target_pseudo) == 1) {
+        retirer_observateur_prive(socket, target_pseudo);
+      }
+    } else if (strncmp(buffer, "PRIVATE_OBSERVERS", 17) == 0) {
+      lister_observateurs_prives(socket);
+    } else if (strncmp(buffer, "MODE_PUBLIC", 11) == 0) {
+      changer_mode_visibilite(socket, 0);
+    } else if (strncmp(buffer, "MODE_PRIVATE", 12) == 0) {
+      changer_mode_visibilite(socket, 1);
     } else if (strncmp(buffer, "CREATE_BIO", 10) == 0) {
       char bio_text[MAX_MESSAGE_LENGTH];
       if (sscanf(buffer, "CREATE_BIO %[^\n]", bio_text) == 1) {
@@ -532,10 +771,10 @@ void *handle_client(void *arg) {
 
       if (challenger_is_playing) {
         char error_buffer[BUFFER_SIZE];
-        snprintf(
-            error_buffer, BUFFER_SIZE,
-            "ERROR %sVous ne pouvez pas lancer de défi pendant une partie%s\n",
-            RED_TEXT, RESET_COLOR);
+        snprintf(error_buffer, BUFFER_SIZE,
+                 "ERROR %sVous ne pouvez pas lancer de défi pendant une "
+                 "partie%s\n",
+                 RED_TEXT, RESET_COLOR);
         write(socket, error_buffer, strlen(error_buffer));
         pthread_mutex_unlock(&clients_mutex);
         continue;
@@ -550,8 +789,8 @@ void *handle_client(void *arg) {
                      "ERROR %sCe joueur est déjà en partie%s\n", RED_TEXT,
                      RESET_COLOR);
             write(socket, error_buffer, strlen(error_buffer));
-            opponent_socket = -2; // Pour indiquer qu'on a trouvé le joueur mais
-                                  // qu'il est occupé
+            opponent_socket = -2; // Pour indiquer qu'on a trouvé le joueur
+                                  // mais qu'il est occupé
           } else {
             opponent_socket = clients[i].socket;
           }
@@ -659,10 +898,74 @@ void *handle_client(void *arg) {
 
       pthread_mutex_lock(&games_mutex);
       if (game_id >= 0 && game_id < nb_games && !games[game_id].jeu.fini) {
-        games[game_id].observers[games[game_id].nb_observers++] = socket;
-        // Envoyer l'état du jeu uniquement à l'observateur qui vient de se
-        // connecter
-        send_game_state_to_observer(&games[game_id], socket);
+        // Trouver les clients correspondant aux joueurs de la partie
+        pthread_mutex_lock(&clients_mutex);
+        Client *player1 = NULL;
+        Client *player2 = NULL;
+        Client *observer = NULL;
+
+        // Trouver l'observateur et les joueurs
+        for (int i = 0; i < nb_clients; i++) {
+          if (clients[i].socket == socket) {
+            observer = &clients[i];
+          }
+          if (strcmp(clients[i].pseudo, games[game_id].player1) == 0) {
+            player1 = &clients[i];
+          }
+          if (strcmp(clients[i].pseudo, games[game_id].player2) == 0) {
+            player2 = &clients[i];
+          }
+        }
+
+        int can_observe = 1;
+        if (player1 && player1->is_private) {
+          // Vérifier si l'observateur est dans la liste des observateurs
+          // privés du joueur 1
+          int found = 0;
+          for (int i = 0; i < player1->nb_private_observers; i++) {
+            if (strcmp(player1->private_observers[i], observer->pseudo) == 0) {
+              found = 1;
+              break;
+            }
+          }
+          if (!found) {
+            can_observe = 0;
+          }
+        }
+
+        if (can_observe && player2 && player2->is_private) {
+          // Vérifier si l'observateur est dans la liste des observateurs privés
+          // du joueur 2
+          int found = 0;
+          for (int i = 0; i < player2->nb_private_observers; i++) {
+            if (strcmp(player2->private_observers[i], observer->pseudo) == 0) {
+              found = 1;
+              break;
+            }
+          }
+          if (!found) {
+            can_observe = 0;
+          }
+        }
+
+        if (can_observe) {
+          games[game_id].observers[games[game_id].nb_observers++] = socket;
+          send_game_state_to_observer(&games[game_id], socket);
+          char success_msg[BUFFER_SIZE];
+          snprintf(success_msg, BUFFER_SIZE,
+                   "OBSERVE_OK %sVous observez maintenant la partie %d%s\n",
+                   GREEN_TEXT, game_id, RESET_COLOR);
+          write(socket, success_msg, strlen(success_msg));
+        } else {
+          char error_msg[BUFFER_SIZE];
+          snprintf(error_msg, BUFFER_SIZE,
+                   "ERROR %sVous n'avez pas la permission d'observer cette "
+                   "partie privée%s\n",
+                   RED_TEXT, RESET_COLOR);
+          write(socket, error_msg, strlen(error_msg));
+        }
+
+        pthread_mutex_unlock(&clients_mutex);
       }
       pthread_mutex_unlock(&games_mutex);
     } else if (strncmp(buffer, "MESSAGE", 7) == 0) {
