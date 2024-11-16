@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #define TAILLE_BUFFER 1024
+#define TAILLE_MAX_BIO 200
 #define TAILLE_MAX_PSEUDO 50
 #define MAX_PARTIES 25
 #define RESET_COLOR "\033[0m"
@@ -29,6 +30,8 @@ static int descripteur_socket_global = -1;
 
 void afficher_aide() {
   printf("\nCommandes disponibles:\n");
+  printf("/create-bio <texte> - Créer ou mettre à jour votre bio\n");
+  printf("/check-bio <pseudo> - Voir la bio d'un joueur\n");
   printf("/list - Liste des joueurs disponibles\n");
   printf("/games - Liste des parties en cours\n");
   printf("/challenge <pseudo> - Défier un joueur\n");
@@ -156,12 +159,16 @@ void *recevoir_messages(void *arg) {
       sscanf(buffer, "CHALLENGE_FROM %s", adversaire);
       printf("\nDéfi reçu de %s! Tapez '/accept %s' pour accepter\n",
              adversaire, adversaire);
-    } else if (strncmp(buffer, "ERROR", 5) == 0) {
-      printf("\n%s%s%s", RED_TEXT, buffer + 6, RESET_COLOR);
     } else if (strncmp(buffer, "MESSAGE", 7) == 0) {
       printf("\n%s", buffer + 7);
     } else if (strncmp(buffer, "HISTORY", 7) == 0) {
       afficher_historique(buffer);
+    } else if (strncmp(buffer, "BIO_UPDATE", 10) == 0) {
+      printf("\n%s\n", buffer + 11);
+    } else if (strncmp(buffer, "BIO", 3) == 0) {
+      printf("\n%s\n", buffer + 4);
+    } else if (strncmp(buffer, "ERROR", 5) == 0) {
+      printf("\n%s\n", buffer + 6);
     }
   }
   return NULL;
@@ -217,6 +224,31 @@ void gerer_message(int socket_fd, char *buffer) {
     envoyer_commande_simple(socket_fd, buffer);
   } else {
     printf("Usage: /message <pseudo> <message>\n");
+  }
+}
+
+void gerer_creation_bio(int socket_fd, char *buffer) {
+  char bio_text[TAILLE_MAX_BIO];
+  if (strlen(buffer) > 12) { // 11 + 1 pour l'espace
+    snprintf(bio_text, sizeof(bio_text), "CREATE_BIO %s", buffer + 12);
+    // format de la commande CREATE_BIO <bio>
+
+    envoyer_commande_simple(socket_fd, bio_text);
+  } else {
+    printf("Usage: /create-bio <texte de votre bio>\n");
+  }
+}
+
+void gerer_consultation_bio(int socket_fd, char *buffer) {
+  char pseudo[MAX_PSEUDO_LENGTH];
+  if (sscanf(buffer, "/check-bio %s", pseudo) == 1) {
+    char commande[TAILLE_BUFFER];
+    snprintf(commande, sizeof(commande), "CHECK_BIO %s", pseudo);
+
+    // format de la commande CHECK_BIO <pseudo>
+    envoyer_commande_simple(socket_fd, commande);
+  } else {
+    printf("Usage: /check-bio <pseudo>\n");
   }
 }
 
@@ -373,6 +405,10 @@ int main(int argc, char **argv) {
       afficher_aide();
     } else if (strcmp(buffer, "/list") == 0) {
       envoyer_commande_simple(descripteur_socket, "LIST");
+    } else if (strncmp(buffer, "/create-bio", 11) == 0) {
+      gerer_creation_bio(descripteur_socket, buffer);
+    } else if (strncmp(buffer, "/check-bio", 10) == 0) {
+      gerer_consultation_bio(descripteur_socket, buffer);
     } else if (strcmp(buffer, "/games") == 0) {
       envoyer_commande_simple(descripteur_socket, "GAMES");
     } else if (strncmp(buffer, "/challenge", 10) == 0 ||
