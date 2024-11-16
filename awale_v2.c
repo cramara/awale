@@ -133,8 +133,6 @@ char *serialiser_jeu(Awale *jeu) {
           jeu->joueurCourant, jeu->fini, jeu->gagnant, jeu->pseudo1,
           jeu->pseudo2);
 
-  printf("Serialized game state: %s\n", buffer);
-
   return buffer;
 }
 
