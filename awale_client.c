@@ -27,11 +27,17 @@ typedef struct {
 
 static DonneesClient *donnees_globales = NULL;
 static int descripteur_socket_global = -1;
+static char dernier_demandeur_ami[TAILLE_MAX_PSEUDO] = ""; // Dernier joueur
+                                                           // ayant demandé en
+                                                           // ami
 
 void afficher_aide() {
   printf("\nCommandes disponibles:\n");
   printf("/create-bio <texte> - Créer ou mettre à jour votre bio\n");
   printf("/check-bio <pseudo> - Voir la bio d'un joueur\n");
+  printf("/add-private-observer <pseudo> - Ajouter un observateur privé\n");
+  printf("/remove-private-observer <pseudo> - Retirer un observateur privé\n");
+  printf("/list-private-observers - Liste des observateurs privés\n");
   printf("/list - Liste des joueurs disponibles\n");
   printf("/games - Liste des parties en cours\n");
   printf("/challenge <pseudo> - Défier un joueur\n");
@@ -169,6 +175,13 @@ void *recevoir_messages(void *arg) {
       printf("\n%s\n", buffer + 4);
     } else if (strncmp(buffer, "ERROR", 5) == 0) {
       printf("\n%s\n", buffer + 6);
+    } else if (strncmp(buffer, "PRIVATE_OBSERVERS", 16) == 0) {
+      printf("\n%s\n", buffer + 17);
+    } else if (strncmp(buffer, "PRIVATE_OBSERVER_ADDED", 21) == 0) {
+      printf("je suis ici et le server me renvoie %s\n", buffer);
+      printf("\n%s\n", buffer + 22);
+    } else if (strncmp(buffer, "PRIVATE_OBSERVER_REMOVED", 23) == 0) {
+      printf("\n%s\n", buffer + 24);
     }
   }
   return NULL;
@@ -224,6 +237,28 @@ void gerer_message(int socket_fd, char *buffer) {
     envoyer_commande_simple(socket_fd, buffer);
   } else {
     printf("Usage: /message <pseudo> <message>\n");
+  }
+}
+
+void gerer_ajout_observateur_prive(int socket_fd, char *buffer) {
+  char pseudo[TAILLE_MAX_PSEUDO];
+  if (sscanf(buffer, "/add-private-observer %s", pseudo) == 1) {
+    char commande[TAILLE_BUFFER];
+    snprintf(commande, sizeof(commande), "ADD_PRIVATE_OBSERVER %s", pseudo);
+    envoyer_commande_simple(socket_fd, commande);
+  } else {
+    printf("Usage: /add-private-observer <pseudo>\n");
+  }
+}
+
+void gerer_retrait_observateur_prive(int socket_fd, char *buffer) {
+  char pseudo[TAILLE_MAX_PSEUDO];
+  if (sscanf(buffer, "/remove-private-observer %s", pseudo) == 1) {
+    char commande[TAILLE_BUFFER];
+    snprintf(commande, sizeof(commande), "REMOVE_PRIVATE_OBSERVER %s", pseudo);
+    envoyer_commande_simple(socket_fd, commande);
+  } else {
+    printf("Usage: /remove-private-observer <pseudo>\n");
   }
 }
 
@@ -407,6 +442,12 @@ int main(int argc, char **argv) {
       envoyer_commande_simple(descripteur_socket, "LIST");
     } else if (strncmp(buffer, "/create-bio", 11) == 0) {
       gerer_creation_bio(descripteur_socket, buffer);
+    } else if (strncmp(buffer, "/add-private-observer", 20) == 0) {
+      gerer_ajout_observateur_prive(descripteur_socket, buffer);
+    } else if (strncmp(buffer, "/remove-private-observer", 23) == 0) {
+      gerer_retrait_observateur_prive(descripteur_socket, buffer);
+    } else if (strcmp(buffer, "/list-private-observers") == 0) {
+      envoyer_commande_simple(descripteur_socket, "LIST_PRIVATE_OBSERVERS");
     } else if (strncmp(buffer, "/check-bio", 10) == 0) {
       gerer_consultation_bio(descripteur_socket, buffer);
     } else if (strcmp(buffer, "/games") == 0) {
