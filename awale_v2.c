@@ -143,8 +143,6 @@ void deserialiser_jeu(Awale *jeu, const char *buffer) {
   if (strncmp(buffer, "GAMESTATE", 9) != 0)
     return;
 
-  printf("je reçois: %s\n", buffer);
-
   const char *ptr = buffer + 10; // Skip "GAMESTATE "
 
   for (int i = 0; i < 12; i++) {
