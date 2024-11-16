@@ -163,12 +163,12 @@ void *recevoir_messages(void *arg) {
       printf("\n%s", buffer + 7);
     } else if (strncmp(buffer, "HISTORY", 7) == 0) {
       afficher_historique(buffer);
-    } else if (strncmp(buffer, "BIO", 3) == 0) {
-      printf("\n%s\n", buffer + 4);
     } else if (strncmp(buffer, "BIO_UPDATE", 10) == 0) {
       printf("\n%s\n", buffer + 11);
+    } else if (strncmp(buffer, "BIO", 3) == 0) {
+      printf("\n%s\n", buffer + 4);
     } else if (strncmp(buffer, "ERROR", 5) == 0) {
-      printf("\n%s%s%s", RED_TEXT, buffer + 6, RESET_COLOR);
+      printf("\n%s\n", buffer + 6);
     }
   }
   return NULL;
@@ -232,6 +232,7 @@ void gerer_creation_bio(int socket_fd, char *buffer) {
   if (strlen(buffer) > 12) { // 11 + 1 pour l'espace
     snprintf(bio_text, sizeof(bio_text), "CREATE_BIO %s", buffer + 12);
     // format de la commande CREATE_BIO <bio>
+
     envoyer_commande_simple(socket_fd, bio_text);
   } else {
     printf("Usage: /create-bio <texte de votre bio>\n");
@@ -404,6 +405,10 @@ int main(int argc, char **argv) {
       afficher_aide();
     } else if (strcmp(buffer, "/list") == 0) {
       envoyer_commande_simple(descripteur_socket, "LIST");
+    } else if (strncmp(buffer, "/create-bio", 11) == 0) {
+      gerer_creation_bio(descripteur_socket, buffer);
+    } else if (strncmp(buffer, "/check-bio", 10) == 0) {
+      gerer_consultation_bio(descripteur_socket, buffer);
     } else if (strcmp(buffer, "/games") == 0) {
       envoyer_commande_simple(descripteur_socket, "GAMES");
     } else if (strncmp(buffer, "/challenge", 10) == 0 ||
@@ -425,10 +430,6 @@ int main(int argc, char **argv) {
       }
       printf("Au revoir!\n");
       break;
-    } else if (strncmp(buffer, "/create-bio", 11) == 0) {
-      gerer_creation_bio(descripteur_socket, buffer);
-    } else if (strncmp(buffer, "/check-bio", 10) == 0) {
-      gerer_consultation_bio(descripteur_socket, buffer);
     } else if (strcmp(buffer, "/forfeit") == 0 || strcmp(buffer, "/ff") == 0) {
       envoyer_commande_simple(descripteur_socket, "FORFEIT");
       printf("Vous avez abandonné la partie.\n");

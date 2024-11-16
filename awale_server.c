@@ -189,7 +189,8 @@ void changer_bio(int socket, const char *bio_text) {
       clients[i].bio[MAX_MESSAGE_LENGTH - 1] = '\0';
       char response[BUFFER_SIZE];
       snprintf(response, BUFFER_SIZE,
-               "BIO_UPDATE Bio mise à jour avec succès!\n");
+               "BIO_UPDATE %sBio mise à jour avec succès!%s\n", GREEN_TEXT,
+               RESET_COLOR);
       write(socket, response, strlen(response));
       pthread_mutex_unlock(&clients_mutex);
       return;
@@ -197,8 +198,11 @@ void changer_bio(int socket, const char *bio_text) {
   }
   pthread_mutex_unlock(&clients_mutex);
 
-  const char *error_msg = "ERROR Erreur lors de la mise à jour de la bio\n";
-  write(socket, error_msg, strlen(error_msg));
+  char error_buffer[BUFFER_SIZE];
+  snprintf(error_buffer, BUFFER_SIZE,
+           "ERROR %sErreur lors de la mise à jour de la bio%s\n", RED_TEXT,
+           RESET_COLOR);
+  write(socket, error_buffer, strlen(error_buffer));
 }
 
 // Regarder la bio d'un joueur
@@ -211,8 +215,8 @@ void regarder_bio(int socket, const char *target_pseudo) {
         snprintf(response, BUFFER_SIZE, "BIO %s n'a pas encore de bio.\n",
                  target_pseudo);
       } else {
-        snprintf(response, BUFFER_SIZE, "BIO Bio de %s: %s\n", target_pseudo,
-                 clients[i].bio);
+        snprintf(response, BUFFER_SIZE, "BIO Bio de %s%s%s: %s\n", GREEN_TEXT,
+                 target_pseudo, RESET_COLOR, clients[i].bio);
       }
       write(socket, response, strlen(response));
       pthread_mutex_unlock(&clients_mutex);
@@ -222,8 +226,8 @@ void regarder_bio(int socket, const char *target_pseudo) {
   pthread_mutex_unlock(&clients_mutex);
 
   char error_msg[BUFFER_SIZE];
-  snprintf(error_msg, BUFFER_SIZE, "ERROR Joueur %s non trouvé\n",
-           target_pseudo);
+  snprintf(error_msg, BUFFER_SIZE, "ERROR %sJoueur %s non trouvé%s\n", RED_TEXT,
+           target_pseudo, RESET_COLOR);
   write(socket, error_msg, strlen(error_msg));
 }
 
@@ -235,8 +239,10 @@ void send_message(int socket, char *buffer) {
 
   // Extraire le destinataire et le message
   if (sscanf(buffer, "MESSAGE %s %[^\n]", destinataire, message) != 2) {
-    const char *error_msg = "ERREUR Format de message incorrect\n";
-    write(socket, error_msg, strlen(error_msg));
+    char error_buffer[BUFFER_SIZE];
+    snprintf(error_buffer, BUFFER_SIZE,
+             "ERROR %sFormat de message incorrect%s\n", RED_TEXT, RESET_COLOR);
+    write(socket, error_buffer, strlen(error_buffer));
     return;
   }
 
@@ -427,8 +433,11 @@ void *handle_client(void *arg) {
     buffer[bytes_read] = '\0';
 
     if (sscanf(buffer, "LOGIN %s", pseudo) != 1) {
-      const char *error_msg = "ERROR Format de connexion invalide";
-      send(socket, error_msg, strlen(error_msg), 0);
+      char error_buffer[BUFFER_SIZE];
+      snprintf(error_buffer, BUFFER_SIZE,
+               "ERROR %sFormat de connexion invalide%s\n", RED_TEXT,
+               RESET_COLOR);
+      send(socket, error_buffer, strlen(error_buffer), 0);
       continue; // Redemander un pseudo
     }
 
@@ -444,8 +453,10 @@ void *handle_client(void *arg) {
 
     if (pseudo_exists) {
       pthread_mutex_unlock(&clients_mutex);
-      const char *error_msg = "ERROR Pseudo déjà utilisé";
-      send(socket, error_msg, strlen(error_msg), 0);
+      char error_buffer[BUFFER_SIZE];
+      snprintf(error_buffer, BUFFER_SIZE, "ERROR %sPseudo déjà utilisé%s\n",
+               RED_TEXT, RESET_COLOR);
+      send(socket, error_buffer, strlen(error_buffer), 0);
       continue; // Redemander un pseudo
     }
 
@@ -476,6 +487,16 @@ void *handle_client(void *arg) {
       send_free_players(socket);
     } else if (strncmp(buffer, "GAMES", 5) == 0) {
       send_active_games(socket);
+    } else if (strncmp(buffer, "CREATE_BIO", 10) == 0) {
+      char bio_text[MAX_MESSAGE_LENGTH];
+      if (sscanf(buffer, "CREATE_BIO %[^\n]", bio_text) == 1) {
+        changer_bio(socket, bio_text);
+      }
+    } else if (strncmp(buffer, "CHECK_BIO", 9) == 0) {
+      char target_pseudo[MAX_PSEUDO_LENGTH];
+      if (sscanf(buffer, "CHECK_BIO %s", target_pseudo) == 1) {
+        regarder_bio(socket, target_pseudo);
+      }
     } else if (strncmp(buffer, "CHALLENGE", 9) == 0) {
       char opponent[MAX_PSEUDO_LENGTH];
       char challenger_pseudo[MAX_PSEUDO_LENGTH];
@@ -500,17 +521,22 @@ void *handle_client(void *arg) {
 
       // Vérifier si le joueur essaie de se défier lui-même
       if (strcmp(challenger_pseudo, opponent) == 0) {
-        const char *error_msg =
-            "ERROR Vous ne pouvez pas vous défier vous-même\n";
-        write(socket, error_msg, strlen(error_msg));
+        char error_buffer[BUFFER_SIZE];
+        snprintf(error_buffer, BUFFER_SIZE,
+                 "ERROR %sVous ne pouvez pas vous défier vous-même%s\n",
+                 RED_TEXT, RESET_COLOR);
+        write(socket, error_buffer, strlen(error_buffer));
         pthread_mutex_unlock(&clients_mutex);
         continue;
       }
 
       if (challenger_is_playing) {
-        const char *error_msg =
-            "ERROR Vous ne pouvez pas lancer de défi pendant une partie\n";
-        write(socket, error_msg, strlen(error_msg));
+        char error_buffer[BUFFER_SIZE];
+        snprintf(
+            error_buffer, BUFFER_SIZE,
+            "ERROR %sVous ne pouvez pas lancer de défi pendant une partie%s\n",
+            RED_TEXT, RESET_COLOR);
+        write(socket, error_buffer, strlen(error_buffer));
         pthread_mutex_unlock(&clients_mutex);
         continue;
       }
@@ -519,8 +545,11 @@ void *handle_client(void *arg) {
       for (int i = 0; i < nb_clients; i++) {
         if (strcmp(clients[i].pseudo, opponent) == 0) {
           if (clients[i].is_playing) {
-            const char *error_msg = "ERROR Ce joueur est déjà en partie\n";
-            write(socket, error_msg, strlen(error_msg));
+            char error_buffer[BUFFER_SIZE];
+            snprintf(error_buffer, BUFFER_SIZE,
+                     "ERROR %sCe joueur est déjà en partie%s\n", RED_TEXT,
+                     RESET_COLOR);
+            write(socket, error_buffer, strlen(error_buffer));
             opponent_socket = -2; // Pour indiquer qu'on a trouvé le joueur mais
                                   // qu'il est occupé
           } else {
@@ -532,8 +561,10 @@ void *handle_client(void *arg) {
       pthread_mutex_unlock(&clients_mutex);
 
       if (opponent_socket == -1) {
-        const char *error_msg = "ERROR Joueur non trouvé\n";
-        write(socket, error_msg, strlen(error_msg));
+        char error_buffer[BUFFER_SIZE];
+        snprintf(error_buffer, BUFFER_SIZE, "ERROR %sJoueur non trouvé%s\n",
+                 RED_TEXT, RESET_COLOR);
+        write(socket, error_buffer, strlen(error_buffer));
       } else if (opponent_socket >=
                  0) { // Si le joueur est trouvé et n'est pas en partie
         add_challenge(challenger_pseudo, opponent);
@@ -560,8 +591,11 @@ void *handle_client(void *arg) {
 
       // Vérifier si le défi existe
       if (!challenge_exists(challenger, accepter_pseudo)) {
-        const char *error_msg = "ERROR Aucun défi en attente de ce joueur\n";
-        write(socket, error_msg, strlen(error_msg));
+        char error_buffer[BUFFER_SIZE];
+        snprintf(error_buffer, BUFFER_SIZE,
+                 "ERROR %sAucun défi en attente de ce joueur%s\n", RED_TEXT,
+                 RESET_COLOR);
+        write(socket, error_buffer, strlen(error_buffer));
         continue;
       }
 
@@ -614,9 +648,12 @@ void *handle_client(void *arg) {
       pthread_mutex_unlock(&clients_mutex);
 
       if (is_playing) {
-        const char *error_msg = "ERROR Vous ne pouvez pas observer une partie "
-                                "pendant que vous jouez\n";
-        write(socket, error_msg, strlen(error_msg));
+        char error_buffer[BUFFER_SIZE];
+        snprintf(error_buffer, BUFFER_SIZE,
+                 "ERROR %sVous ne pouvez pas observer une partie pendant que "
+                 "vous jouez%s\n",
+                 RED_TEXT, RESET_COLOR);
+        write(socket, error_buffer, strlen(error_buffer));
         continue;
       }
 
@@ -702,17 +739,6 @@ void *handle_client(void *arg) {
       ajouter_historique(buffer);
     } else if (strncmp(buffer, "HISTORY", 7) == 0) {
       send_history(socket);
-    } else if (strncmp(buffer, "CREATE_BIO", 10) == 0) {
-      char bio_text[MAX_MESSAGE_LENGTH];
-      if (sscanf(buffer, "CREATE_BIO %[^\n]", bio_text) == 1) {
-        changer_bio(socket, bio_text);
-      }
-    } else if (strncmp(buffer, "CHECK_BIO", 9) == 0) {
-      printf("je suis ici et voici le message recu %s\n", buffer);
-      char target_pseudo[MAX_PSEUDO_LENGTH];
-      if (sscanf(buffer, "CHECK_BIO %s", target_pseudo) == 1) {
-        regarder_bio(socket, target_pseudo);
-      }
     }
   }
 
