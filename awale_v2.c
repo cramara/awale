@@ -227,5 +227,6 @@ void afficher_plateau(Awale *jeu, int perspective_joueur) {
   printf("\nScores:\n");
   printf("%s : %d\n", jeu->pseudo1, jeu->scoreJ1);
   printf("%s : %d\n", jeu->pseudo2, jeu->scoreJ2);
-  printf("Tour du joueur %d\n", jeu->joueurCourant);
+  printf("Tour du joueur %s\n",
+         jeu->joueurCourant == 1 ? jeu->pseudo1 : jeu->pseudo2);
 }

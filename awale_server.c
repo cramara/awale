@@ -589,8 +589,11 @@ void envoyer_partie_observeurs(Game *game, int observer_socket) {
 int defi_existe(const char *challenger, const char *challenged) {
   pthread_mutex_lock(&challenges_mutex);
   for (int i = 0; i < nb_challenges; i++) {
-    if (strcmp(pending_challenges[i].challenger, challenger) == 0 &&
-        strcmp(pending_challenges[i].challenged, challenged) == 0) {
+    // Vérifie dans les deux sens
+    if ((strcmp(pending_challenges[i].challenger, challenger) == 0 &&
+         strcmp(pending_challenges[i].challenged, challenged) == 0) ||
+        (strcmp(pending_challenges[i].challenger, challenged) == 0 &&
+         strcmp(pending_challenges[i].challenged, challenger) == 0)) {
       pthread_mutex_unlock(&challenges_mutex);
       return 1;
     }
@@ -629,6 +632,161 @@ void supprimer_defi(const char *challenger, const char *challenged) {
     }
   }
   pthread_mutex_unlock(&challenges_mutex);
+}
+
+void accepter_partie(int socket, const char *buffer) {
+  char challenger[MAX_PSEUDO_LENGTH];
+  char accepter_pseudo[MAX_PSEUDO_LENGTH];
+  sscanf(buffer, "ACCEPT %s", challenger);
+
+  pthread_mutex_lock(&clients_mutex);
+  for (int i = 0; i < nb_clients; i++) {
+    if (clients[i].socket == socket) {
+      strncpy(accepter_pseudo, clients[i].pseudo, MAX_PSEUDO_LENGTH - 1);
+      accepter_pseudo[MAX_PSEUDO_LENGTH - 1] = '\0';
+      break;
+    }
+  }
+  pthread_mutex_unlock(&clients_mutex);
+
+  if (!defi_existe(challenger, accepter_pseudo)) {
+    char error_buffer[BUFFER_SIZE];
+    snprintf(error_buffer, BUFFER_SIZE,
+             "ERROR %sAucun défi en attente de ce joueur%s\n", RED_TEXT,
+             RESET_COLOR);
+    write(socket, error_buffer, strlen(error_buffer));
+    return;
+  }
+
+  pthread_mutex_lock(&clients_mutex);
+  pthread_mutex_lock(&games_mutex);
+
+  int challenger_socket = -1;
+  for (int i = 0; i < nb_clients; i++) {
+    if (strcmp(clients[i].pseudo, challenger) == 0) {
+      challenger_socket = clients[i].socket;
+      clients[i].is_playing = 1;
+      clients[i].game_id = nb_games;
+      break;
+    }
+  }
+
+  for (int i = 0; i < nb_clients; i++) {
+    if (clients[i].socket == socket) {
+      clients[i].is_playing = 1;
+      clients[i].game_id = nb_games;
+      break;
+    }
+  }
+
+  Game *game = &games[nb_games++];
+  creation_partie(game, challenger, accepter_pseudo, challenger_socket, socket);
+  pthread_mutex_unlock(&games_mutex);
+  pthread_mutex_unlock(&clients_mutex);
+
+  supprimer_defi(challenger, accepter_pseudo);
+  diffuser_etat_partie(game);
+}
+
+void gerer_forfait(int socket) {
+  pthread_mutex_lock(&clients_mutex);
+  int game_id = -1;
+  char forfeiteur[MAX_PSEUDO_LENGTH];
+  // Trouver le joueur qui abandonne
+  for (int i = 0; i < nb_clients; i++) {
+    if (clients[i].socket == socket && clients[i].is_playing) {
+      game_id = clients[i].game_id;
+      strncpy(forfeiteur, clients[i].pseudo, MAX_PSEUDO_LENGTH - 1);
+      forfeiteur[MAX_PSEUDO_LENGTH - 1] = '\0';
+      break;
+    }
+  }
+  pthread_mutex_unlock(&clients_mutex);
+
+  if (game_id != -1) {
+    pthread_mutex_lock(&games_mutex);
+    Game *game = &games[game_id];
+
+    // Déterminer qui abandonne et qui gagne
+    if (socket == game->socket1) {
+      game->jeu.scoreJ2 = 25; // Le joueur 2 gagne
+      game->jeu.scoreJ1 = 0;  // Le joueur 1 perd
+      game->jeu.gagnant = 2;
+      // Ajouter à l'historique avec le bon gagnant
+      char history_buffer[BUFFER_SIZE];
+      snprintf(history_buffer, BUFFER_SIZE, "ADD_HISTORY %s %s %d %d",
+               game->player2, game->player1, // Le joueur 2 est le gagnant
+               game->jeu.scoreJ2, game->jeu.scoreJ1);
+      ajouter_historique(history_buffer);
+    } else {
+      game->jeu.scoreJ1 = 25; // Le joueur 1 gagne
+      game->jeu.scoreJ2 = 0;  // Le joueur 2 perd
+      game->jeu.gagnant = 1;
+      // Ajouter à l'historique avec le bon gagnant
+      char history_buffer[BUFFER_SIZE];
+      snprintf(history_buffer, BUFFER_SIZE, "ADD_HISTORY %s %s %d %d",
+               game->player1, game->player2, // Le joueur 1 est le gagnant
+               game->jeu.scoreJ1, game->jeu.scoreJ2);
+      ajouter_historique(history_buffer);
+    }
+
+    game->jeu.fini = 1;
+    diffuser_etat_partie(game);
+
+    // Mettre à jour le statut des joueurs
+    pthread_mutex_lock(&clients_mutex);
+    for (int i = 0; i < nb_clients; i++) {
+      if (clients[i].game_id == game_id) {
+        clients[i].is_playing = 0;
+        clients[i].game_id = -1;
+      }
+    }
+    pthread_mutex_unlock(&clients_mutex);
+
+    pthread_mutex_unlock(&games_mutex);
+  }
+}
+
+void gerer_move(int socket, const char *buffer) {
+  int move;
+  sscanf(buffer, "MOVE %d", &move);
+
+  pthread_mutex_lock(&clients_mutex);
+  int game_id = -1;
+  for (int i = 0; i < nb_clients; i++) {
+    if (clients[i].socket == socket && clients[i].is_playing) {
+      game_id = clients[i].game_id;
+      break;
+    }
+  }
+  pthread_mutex_unlock(&clients_mutex);
+
+  if (game_id != -1) {
+    pthread_mutex_lock(&games_mutex);
+    Game *game = &games[game_id];
+
+    if (!game->jeu.fini) { // Vérifier si la partie n'est pas déjà finie
+      // Vérifier si c'est le bon joueur
+      unsigned int player_num = (socket == game->socket1) ? 1 : 2;
+      if (player_num == game->jeu.joueurCourant) {
+        // Jouer le coup avec awale_v2.c
+        if (jouer_coup(&game->jeu, move)) {
+          diffuser_etat_partie(game);
+        } else {
+          char error_msg[BUFFER_SIZE];
+          snprintf(error_msg, BUFFER_SIZE, "ERROR %sCoup invalide%s\n",
+                   RED_TEXT, RESET_COLOR);
+          write(socket, error_msg, strlen(error_msg));
+        }
+      } else {
+        char error_msg[BUFFER_SIZE];
+        snprintf(error_msg, BUFFER_SIZE, "ERROR %sCe n'est pas votre tour%s\n",
+                 RED_TEXT, RESET_COLOR);
+        write(socket, error_msg, strlen(error_msg));
+      }
+    }
+    pthread_mutex_unlock(&games_mutex);
+  }
 }
 
 void defier(int socket, const char *buffer) {
@@ -703,61 +861,6 @@ void defier(int socket, const char *buffer) {
   }
 }
 
-void accepter_partie(int socket, const char *buffer) {
-  char challenger[MAX_PSEUDO_LENGTH];
-  char accepter_pseudo[MAX_PSEUDO_LENGTH];
-  sscanf(buffer, "ACCEPT %s", challenger);
-
-  pthread_mutex_lock(&clients_mutex);
-  for (int i = 0; i < nb_clients; i++) {
-    if (clients[i].socket == socket) {
-      strncpy(accepter_pseudo, clients[i].pseudo, MAX_PSEUDO_LENGTH - 1);
-      accepter_pseudo[MAX_PSEUDO_LENGTH - 1] = '\0';
-      break;
-    }
-  }
-  pthread_mutex_unlock(&clients_mutex);
-
-  if (!defi_existe(challenger, accepter_pseudo)) {
-    char error_buffer[BUFFER_SIZE];
-    snprintf(error_buffer, BUFFER_SIZE,
-             "ERROR %sAucun défi en attente de ce joueur%s\n", RED_TEXT,
-             RESET_COLOR);
-    write(socket, error_buffer, strlen(error_buffer));
-    return;
-  }
-
-  pthread_mutex_lock(&clients_mutex);
-  pthread_mutex_lock(&games_mutex);
-
-  int challenger_socket = -1;
-  for (int i = 0; i < nb_clients; i++) {
-    if (strcmp(clients[i].pseudo, challenger) == 0) {
-      challenger_socket = clients[i].socket;
-      clients[i].is_playing = 1;
-      clients[i].game_id = nb_games;
-      break;
-    }
-  }
-
-  for (int i = 0; i < nb_clients; i++) {
-    if (clients[i].socket == socket) {
-      clients[i].is_playing = 1;
-      clients[i].game_id = nb_games;
-      break;
-    }
-  }
-
-  Game *game = &games[nb_games++];
-  creation_partie(game, challenger, accepter_pseudo, challenger_socket, socket);
-
-  pthread_mutex_unlock(&games_mutex);
-  pthread_mutex_unlock(&clients_mutex);
-
-  supprimer_defi(challenger, accepter_pseudo);
-  diffuser_etat_partie(game);
-}
-
 void observer_partie(int socket, const char *buffer) {
   int game_id;
   sscanf(buffer, "OBSERVE %d", &game_id);
@@ -784,6 +887,29 @@ void observer_partie(int socket, const char *buffer) {
   }
 
   pthread_mutex_lock(&games_mutex);
+
+  // Vérifier si l'ID de la partie est valide
+  if (game_id < 0 || game_id >= nb_games) {
+    pthread_mutex_unlock(&games_mutex);
+    char error_msg[BUFFER_SIZE];
+    snprintf(error_msg, BUFFER_SIZE,
+             "ERROR %sLa partie que vous essayez d'observer n'existe pas%s\n",
+             RED_TEXT, RESET_COLOR);
+    write(socket, error_msg, strlen(error_msg));
+    return;
+  }
+
+  // Vérifier si la partie est terminée
+  if (games[game_id].jeu.fini) {
+    pthread_mutex_unlock(&games_mutex);
+    char error_msg[BUFFER_SIZE];
+    snprintf(error_msg, BUFFER_SIZE,
+             "ERROR %sLa partie que vous essayez d'observer est terminée%s\n",
+             RED_TEXT, RESET_COLOR);
+    write(socket, error_msg, strlen(error_msg));
+    return;
+  }
+
   if (game_id >= 0 && game_id < nb_games && !games[game_id].jeu.fini) {
     // Trouver les clients correspondant aux joueurs de la partie
     pthread_mutex_lock(&clients_mutex);
@@ -975,72 +1101,9 @@ void *gerer_client(void *arg) {
       envoyer_message(socket, buffer);
       memset(buffer, 0, BUFFER_SIZE);
     } else if (strncmp(buffer, "MOVE", 4) == 0) {
-      int move;
-      sscanf(buffer, "MOVE %d", &move);
-
-      pthread_mutex_lock(&clients_mutex);
-      int game_id = -1;
-      for (int i = 0; i < nb_clients; i++) {
-        if (clients[i].socket == socket && clients[i].is_playing) {
-          game_id = clients[i].game_id;
-          break;
-        }
-      }
-      pthread_mutex_unlock(&clients_mutex);
-
-      if (game_id != -1) {
-        pthread_mutex_lock(&games_mutex);
-        Game *game = &games[game_id];
-
-        // Vérifier si c'est le bon joueur
-        unsigned int player_num = (socket == game->socket1) ? 1 : 2;
-        if (player_num == game->jeu.joueurCourant) {
-          // Jouer le coup avec awale_v2.c
-          if (jouer_coup(&game->jeu, move)) {
-            diffuser_etat_partie(game);
-          }
-        }
-        pthread_mutex_unlock(&games_mutex);
-      }
+      gerer_move(socket, buffer);
     } else if (strncmp(buffer, "FORFEIT", 7) == 0) {
-      pthread_mutex_lock(&clients_mutex);
-      int game_id = -1;
-      for (int i = 0; i < nb_clients; i++) {
-        if (clients[i].socket == socket && clients[i].is_playing) {
-          game_id = clients[i].game_id;
-          break;
-        }
-      }
-      pthread_mutex_unlock(&clients_mutex);
-
-      if (game_id != -1) {
-        pthread_mutex_lock(&games_mutex);
-        Game *game = &games[game_id];
-
-        // Déterminer qui abandonne et qui gagne
-        if (socket == game->socket1) {
-          game->jeu.scoreJ2 = 25; // Le joueur 2 gagne
-          game->jeu.gagnant = 2;
-        } else {
-          game->jeu.scoreJ1 = 25; // Le joueur 1 gagne
-          game->jeu.gagnant = 1;
-        }
-
-        game->jeu.fini = 1;
-        diffuser_etat_partie(game);
-
-        // Mettre à jour le statut des joueurs
-        pthread_mutex_lock(&clients_mutex);
-        for (int i = 0; i < nb_clients; i++) {
-          if (clients[i].game_id == game_id) {
-            clients[i].is_playing = 0;
-            clients[i].game_id = -1;
-          }
-        }
-        pthread_mutex_unlock(&clients_mutex);
-
-        pthread_mutex_unlock(&games_mutex);
-      }
+      gerer_forfait(socket);
     } else if (strncmp(buffer, "ADD_HISTORY", 11) == 0) {
       ajouter_historique(buffer);
     } else if (strncmp(buffer, "HISTORY", 7) == 0) {

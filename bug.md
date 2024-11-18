@@ -1,6 +1,2 @@
--si le J1 ff et qu'on va dans l'historique des partie le score est inversé et c'est celui qui a ff qui a gagné
--on peut observer une partie inexistante
 -gérer les croisement de demande de challenge
--dire à qui c'est de jouer
 -faire en sorte que si on challenge une personne qui vient de nous envoyer un challenge, ça accepte le challenge
-- affiche le pseudo du joueur qui joue
