@@ -57,20 +57,23 @@ typedef struct {
   char challenged[MAX_PSEUDO_LENGTH];
 } Challenge;
 
+// Variables globales
 Client clients[MAX_CLIENTS];
 Game games[MAX_GAMES];
+Challenge pending_challenges[MAX_CLIENTS];
+HistoriqueParties historique[MAX_HISTORIQUE];
 int nb_clients = 0;
 int nb_games = 0;
-HistoriqueParties historique[MAX_HISTORIQUE];
+int nb_challenges = 0;
 int nb_historique = 0;
+
+// Mutex
 pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t games_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t historique_mutex = PTHREAD_MUTEX_INITIALIZER;
-Challenge pending_challenges[MAX_CLIENTS];
-int nb_challenges = 0;
 pthread_mutex_t challenges_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-void broadcast_game_state(Game *game) {
+void diffuser_etat_partie(Game *game) {
   // Buffer pour stocker l'état complet
   char full_state[BUFFER_SIZE];
 
@@ -98,7 +101,7 @@ void broadcast_game_state(Game *game) {
   memset(full_state, 0, BUFFER_SIZE);
 }
 
-void send_free_players(int socket) {
+void envoyer_joueurs_libres(int socket) {
   char buffer[BUFFER_SIZE] = "PLAYERS";
   pthread_mutex_lock(&clients_mutex);
   for (int i = 0; i < nb_clients; i++) {
@@ -148,7 +151,7 @@ void ajouter_historique(const char *buffer) {
   }
 }
 
-void send_history(int socket) {
+void envoyer_historique_parties(int socket) {
   char history_message[BUFFER_SIZE] = "HISTORY ";
 
   pthread_mutex_lock(&historique_mutex);
@@ -206,7 +209,6 @@ void changer_bio(int socket, const char *bio_text) {
   write(socket, error_buffer, strlen(error_buffer));
 }
 
-// Regarder la bio d'un joueur
 void regarder_bio(int socket, const char *target_pseudo) {
   pthread_mutex_lock(&clients_mutex);
   for (int i = 0; i < nb_clients; i++) {
@@ -445,7 +447,7 @@ void changer_mode_visibilite(int socket, int mode) {
   pthread_mutex_unlock(&clients_mutex);
 }
 
-void send_message(int socket, char *buffer) {
+void envoyer_message(int socket, char *buffer) {
   // Format du buffer : "MESSAGE <destinataire> <message>"
   char destinataire[MAX_PSEUDO_LENGTH];
   char message[BUFFER_SIZE];
@@ -513,7 +515,7 @@ void send_message(int socket, char *buffer) {
   memset(buffer, 0, BUFFER_SIZE);
 }
 
-void send_active_games(int socket) {
+void envoyer_parties_actives(int socket) {
   char buffer[BUFFER_SIZE] = "GAMES";
   pthread_mutex_lock(&games_mutex);
   for (int i = 0; i < nb_games; i++) {
@@ -533,8 +535,8 @@ void send_active_games(int socket) {
   memset(buffer, 0, BUFFER_SIZE);
 }
 
-void init_game(Game *game, char *player1, char *player2, int socket1,
-               int socket2) {
+void creation_partie(Game *game, char *player1, char *player2, int socket1,
+                     int socket2) {
   // Copie les noms des joueurs
   strncpy(game->player1, player1, MAX_PSEUDO_LENGTH - 1);
   strncpy(game->player2, player2, MAX_PSEUDO_LENGTH - 1);
@@ -567,7 +569,7 @@ void retirer_observateur(Game *game, int socket) {
 }
 
 // Ajouter cette fonction pour envoyer l'état du jeu uniquement à un observateur
-void send_game_state_to_observer(Game *game, int observer_socket) {
+void envoyer_partie_observeurs(Game *game, int observer_socket) {
   char full_state[BUFFER_SIZE];
 
   snprintf(
@@ -584,7 +586,7 @@ void send_game_state_to_observer(Game *game, int observer_socket) {
 }
 
 // Vérifie si un défi est en attente entre deux joueurs
-int challenge_exists(const char *challenger, const char *challenged) {
+int defi_existe(const char *challenger, const char *challenged) {
   pthread_mutex_lock(&challenges_mutex);
   for (int i = 0; i < nb_challenges; i++) {
     if (strcmp(pending_challenges[i].challenger, challenger) == 0 &&
@@ -598,7 +600,7 @@ int challenge_exists(const char *challenger, const char *challenged) {
 }
 
 // Ajoute un nouveau défi
-void add_challenge(const char *challenger, const char *challenged) {
+void ajouter_defi(const char *challenger, const char *challenged) {
   pthread_mutex_lock(&challenges_mutex);
   if (nb_challenges < MAX_CLIENTS) {
     strncpy(pending_challenges[nb_challenges].challenger, challenger,
@@ -613,7 +615,7 @@ void add_challenge(const char *challenger, const char *challenged) {
 }
 
 // Supprime un défi
-void remove_challenge(const char *challenger, const char *challenged) {
+void supprimer_defi(const char *challenger, const char *challenged) {
   pthread_mutex_lock(&challenges_mutex);
   for (int i = 0; i < nb_challenges; i++) {
     if (strcmp(pending_challenges[i].challenger, challenger) == 0 &&
@@ -629,7 +631,233 @@ void remove_challenge(const char *challenger, const char *challenged) {
   pthread_mutex_unlock(&challenges_mutex);
 }
 
-void *handle_client(void *arg) {
+void defier(int socket, const char *buffer) {
+  char opponent[MAX_PSEUDO_LENGTH];
+  char challenger_pseudo[MAX_PSEUDO_LENGTH];
+  sscanf(buffer, "CHALLENGE %s", opponent);
+
+  pthread_mutex_lock(&clients_mutex);
+  int opponent_socket = -1;
+  int challenger_is_playing = 0;
+
+  // Trouver le pseudo du challenger
+  for (int i = 0; i < nb_clients; i++) {
+    if (clients[i].socket == socket) {
+      strncpy(challenger_pseudo, clients[i].pseudo, MAX_PSEUDO_LENGTH - 1);
+      challenger_pseudo[MAX_PSEUDO_LENGTH - 1] = '\0';
+      if (clients[i].is_playing) {
+        challenger_is_playing = 1;
+      }
+      break;
+    }
+  }
+
+  // Cas d'erreurs : pseudo identique, déjà en jeu, joueur introuvable
+  if (strcmp(challenger_pseudo, opponent) == 0) {
+    char error_buffer[BUFFER_SIZE];
+    snprintf(error_buffer, BUFFER_SIZE,
+             "ERROR %sVous ne pouvez pas vous défier vous-même%s\n", RED_TEXT,
+             RESET_COLOR);
+    write(socket, error_buffer, strlen(error_buffer));
+    pthread_mutex_unlock(&clients_mutex);
+    return;
+  }
+
+  if (challenger_is_playing) {
+    char error_buffer[BUFFER_SIZE];
+    snprintf(error_buffer, BUFFER_SIZE,
+             "ERROR %sVous ne pouvez pas lancer de défi pendant une partie%s\n",
+             RED_TEXT, RESET_COLOR);
+    write(socket, error_buffer, strlen(error_buffer));
+    pthread_mutex_unlock(&clients_mutex);
+    return;
+  }
+
+  for (int i = 0; i < nb_clients; i++) {
+    if (strcmp(clients[i].pseudo, opponent) == 0) {
+      if (clients[i].is_playing) {
+        char error_buffer[BUFFER_SIZE];
+        snprintf(error_buffer, BUFFER_SIZE,
+                 "ERROR %sCe joueur est déjà en partie%s\n", RED_TEXT,
+                 RESET_COLOR);
+        write(socket, error_buffer, strlen(error_buffer));
+        opponent_socket = -2;
+      } else {
+        opponent_socket = clients[i].socket;
+      }
+      break;
+    }
+  }
+  pthread_mutex_unlock(&clients_mutex);
+
+  if (opponent_socket == -1) {
+    char error_buffer[BUFFER_SIZE];
+    snprintf(error_buffer, BUFFER_SIZE, "ERROR %sJoueur non trouvé%s\n",
+             RED_TEXT, RESET_COLOR);
+    write(socket, error_buffer, strlen(error_buffer));
+  } else if (opponent_socket >= 0) {
+    ajouter_defi(challenger_pseudo, opponent);
+    char challenge[BUFFER_SIZE];
+    snprintf(challenge, BUFFER_SIZE, "CHALLENGE_FROM %s", challenger_pseudo);
+    write(opponent_socket, challenge, strlen(challenge));
+  }
+}
+
+void accepter_partie(int socket, const char *buffer) {
+  char challenger[MAX_PSEUDO_LENGTH];
+  char accepter_pseudo[MAX_PSEUDO_LENGTH];
+  sscanf(buffer, "ACCEPT %s", challenger);
+
+  pthread_mutex_lock(&clients_mutex);
+  for (int i = 0; i < nb_clients; i++) {
+    if (clients[i].socket == socket) {
+      strncpy(accepter_pseudo, clients[i].pseudo, MAX_PSEUDO_LENGTH - 1);
+      accepter_pseudo[MAX_PSEUDO_LENGTH - 1] = '\0';
+      break;
+    }
+  }
+  pthread_mutex_unlock(&clients_mutex);
+
+  if (!defi_existe(challenger, accepter_pseudo)) {
+    char error_buffer[BUFFER_SIZE];
+    snprintf(error_buffer, BUFFER_SIZE,
+             "ERROR %sAucun défi en attente de ce joueur%s\n", RED_TEXT,
+             RESET_COLOR);
+    write(socket, error_buffer, strlen(error_buffer));
+    return;
+  }
+
+  pthread_mutex_lock(&clients_mutex);
+  pthread_mutex_lock(&games_mutex);
+
+  int challenger_socket = -1;
+  for (int i = 0; i < nb_clients; i++) {
+    if (strcmp(clients[i].pseudo, challenger) == 0) {
+      challenger_socket = clients[i].socket;
+      clients[i].is_playing = 1;
+      clients[i].game_id = nb_games;
+      break;
+    }
+  }
+
+  for (int i = 0; i < nb_clients; i++) {
+    if (clients[i].socket == socket) {
+      clients[i].is_playing = 1;
+      clients[i].game_id = nb_games;
+      break;
+    }
+  }
+
+  Game *game = &games[nb_games++];
+  creation_partie(game, challenger, accepter_pseudo, challenger_socket, socket);
+
+  pthread_mutex_unlock(&games_mutex);
+  pthread_mutex_unlock(&clients_mutex);
+
+  supprimer_defi(challenger, accepter_pseudo);
+  diffuser_etat_partie(game);
+}
+
+void observer_partie(int socket, const char *buffer) {
+  int game_id;
+  sscanf(buffer, "OBSERVE %d", &game_id);
+
+  // Vérifier si le joueur est déjà en partie
+  pthread_mutex_lock(&clients_mutex);
+  int is_playing = 0;
+  for (int i = 0; i < nb_clients; i++) {
+    if (clients[i].socket == socket && clients[i].is_playing) {
+      is_playing = 1;
+      break;
+    }
+  }
+  pthread_mutex_unlock(&clients_mutex);
+
+  if (is_playing) {
+    char error_buffer[BUFFER_SIZE];
+    snprintf(error_buffer, BUFFER_SIZE,
+             "ERROR %sVous ne pouvez pas observer une partie pendant que "
+             "vous jouez%s\n",
+             RED_TEXT, RESET_COLOR);
+    write(socket, error_buffer, strlen(error_buffer));
+    return;
+  }
+
+  pthread_mutex_lock(&games_mutex);
+  if (game_id >= 0 && game_id < nb_games && !games[game_id].jeu.fini) {
+    // Trouver les clients correspondant aux joueurs de la partie
+    pthread_mutex_lock(&clients_mutex);
+    Client *player1 = NULL;
+    Client *player2 = NULL;
+    Client *observer = NULL;
+
+    // Trouver l'observateur et les joueurs
+    for (int i = 0; i < nb_clients; i++) {
+      if (clients[i].socket == socket) {
+        observer = &clients[i];
+      }
+      if (strcmp(clients[i].pseudo, games[game_id].player1) == 0) {
+        player1 = &clients[i];
+      }
+      if (strcmp(clients[i].pseudo, games[game_id].player2) == 0) {
+        player2 = &clients[i];
+      }
+    }
+
+    int can_observe = 1;
+    if (player1 && player1->is_private) {
+      // Vérifier si l'observateur est dans la liste des observateurs
+      // privés du joueur 1
+      int found = 0;
+      for (int i = 0; i < player1->nb_private_observers; i++) {
+        if (strcmp(player1->private_observers[i], observer->pseudo) == 0) {
+          found = 1;
+          break;
+        }
+      }
+      if (!found) {
+        can_observe = 0;
+      }
+    }
+
+    if (can_observe && player2 && player2->is_private) {
+      // Vérifier si l'observateur est dans la liste des observateurs privés
+      // du joueur 2
+      int found = 0;
+      for (int i = 0; i < player2->nb_private_observers; i++) {
+        if (strcmp(player2->private_observers[i], observer->pseudo) == 0) {
+          found = 1;
+          break;
+        }
+      }
+      if (!found) {
+        can_observe = 0;
+      }
+    }
+
+    if (can_observe) {
+      games[game_id].observers[games[game_id].nb_observers++] = socket;
+      envoyer_partie_observeurs(&games[game_id], socket);
+      char success_msg[BUFFER_SIZE];
+      snprintf(success_msg, BUFFER_SIZE,
+               "OBSERVE_OK %sVous observez maintenant la partie %d%s\n",
+               GREEN_TEXT, game_id, RESET_COLOR);
+      write(socket, success_msg, strlen(success_msg));
+    } else {
+      char error_msg[BUFFER_SIZE];
+      snprintf(error_msg, BUFFER_SIZE,
+               "ERROR %sVous n'avez pas la permission d'observer cette "
+               "partie privée%s\n",
+               RED_TEXT, RESET_COLOR);
+      write(socket, error_msg, strlen(error_msg));
+    }
+
+    pthread_mutex_unlock(&clients_mutex);
+  }
+  pthread_mutex_unlock(&games_mutex);
+}
+
+void *gerer_client(void *arg) {
   int socket = *(int *)arg;
   char buffer[BUFFER_SIZE];
   char pseudo[MAX_PSEUDO_LENGTH];
@@ -707,9 +935,9 @@ void *handle_client(void *arg) {
     buffer[n] = 0;
 
     if (strncmp(buffer, "LIST", 4) == 0) {
-      send_free_players(socket);
+      envoyer_joueurs_libres(socket);
     } else if (strncmp(buffer, "GAMES", 5) == 0) {
-      send_active_games(socket);
+      envoyer_parties_actives(socket);
     } else if (strncmp(buffer, "ADD_PRIVATE_OBSERVER", 19) == 0) {
       char target_pseudo[MAX_PSEUDO_LENGTH];
       if (sscanf(buffer, "ADD_PRIVATE_OBSERVER %s", target_pseudo) == 1) {
@@ -736,240 +964,15 @@ void *handle_client(void *arg) {
       if (sscanf(buffer, "CHECK_BIO %s", target_pseudo) == 1) {
         regarder_bio(socket, target_pseudo);
       }
-    } else if (strncmp(buffer, "CHALLENGE", 9) == 0) {
-      char opponent[MAX_PSEUDO_LENGTH];
-      char challenger_pseudo[MAX_PSEUDO_LENGTH];
-      sscanf(buffer, "CHALLENGE %s", opponent);
-      printf("buffer %s\n", buffer);
-
-      pthread_mutex_lock(&clients_mutex);
-      int opponent_socket = -1;
-      int challenger_is_playing = 0;
-
-      // Trouver d'abord le pseudo du challenger
-      for (int i = 0; i < nb_clients; i++) {
-        if (clients[i].socket == socket) {
-          strncpy(challenger_pseudo, clients[i].pseudo, MAX_PSEUDO_LENGTH - 1);
-          challenger_pseudo[MAX_PSEUDO_LENGTH - 1] = '\0';
-          if (clients[i].is_playing) {
-            challenger_is_playing = 1;
-          }
-          break;
-        }
-      }
-
-      // Vérifier si le joueur essaie de se défier lui-même
-      if (strcmp(challenger_pseudo, opponent) == 0) {
-        char error_buffer[BUFFER_SIZE];
-        snprintf(error_buffer, BUFFER_SIZE,
-                 "ERROR %sVous ne pouvez pas vous défier vous-même%s\n",
-                 RED_TEXT, RESET_COLOR);
-        write(socket, error_buffer, strlen(error_buffer));
-        pthread_mutex_unlock(&clients_mutex);
-        continue;
-      }
-
-      if (challenger_is_playing) {
-        char error_buffer[BUFFER_SIZE];
-        snprintf(error_buffer, BUFFER_SIZE,
-                 "ERROR %sVous ne pouvez pas lancer de défi pendant une "
-                 "partie%s\n",
-                 RED_TEXT, RESET_COLOR);
-        write(socket, error_buffer, strlen(error_buffer));
-        pthread_mutex_unlock(&clients_mutex);
-        continue;
-      }
-
-      // Chercher l'adversaire
-      for (int i = 0; i < nb_clients; i++) {
-        if (strcmp(clients[i].pseudo, opponent) == 0) {
-          if (clients[i].is_playing) {
-            char error_buffer[BUFFER_SIZE];
-            snprintf(error_buffer, BUFFER_SIZE,
-                     "ERROR %sCe joueur est déjà en partie%s\n", RED_TEXT,
-                     RESET_COLOR);
-            write(socket, error_buffer, strlen(error_buffer));
-            opponent_socket = -2; // Pour indiquer qu'on a trouvé le joueur
-                                  // mais qu'il est occupé
-          } else {
-            opponent_socket = clients[i].socket;
-          }
-          break;
-        }
-      }
-      pthread_mutex_unlock(&clients_mutex);
-
-      if (opponent_socket == -1) {
-        char error_buffer[BUFFER_SIZE];
-        snprintf(error_buffer, BUFFER_SIZE, "ERROR %sJoueur non trouvé%s\n",
-                 RED_TEXT, RESET_COLOR);
-        write(socket, error_buffer, strlen(error_buffer));
-      } else if (opponent_socket >=
-                 0) { // Si le joueur est trouvé et n'est pas en partie
-        add_challenge(challenger_pseudo, opponent);
-        char challenge[BUFFER_SIZE];
-        snprintf(challenge, BUFFER_SIZE, "CHALLENGE_FROM %s",
-                 challenger_pseudo);
-        write(opponent_socket, challenge, strlen(challenge));
-      }
+    }
+    if (strncmp(buffer, "CHALLENGE", 9) == 0) {
+      defier(socket, buffer);
     } else if (strncmp(buffer, "ACCEPT", 6) == 0) {
-      char challenger[MAX_PSEUDO_LENGTH];
-      char accepter_pseudo[MAX_PSEUDO_LENGTH];
-      sscanf(buffer, "ACCEPT %s", challenger);
-
-      // Trouver le pseudo de celui qui accepte
-      pthread_mutex_lock(&clients_mutex);
-      for (int i = 0; i < nb_clients; i++) {
-        if (clients[i].socket == socket) {
-          strncpy(accepter_pseudo, clients[i].pseudo, MAX_PSEUDO_LENGTH - 1);
-          accepter_pseudo[MAX_PSEUDO_LENGTH - 1] = '\0';
-          break;
-        }
-      }
-      pthread_mutex_unlock(&clients_mutex);
-
-      // Vérifier si le défi existe
-      if (!challenge_exists(challenger, accepter_pseudo)) {
-        char error_buffer[BUFFER_SIZE];
-        snprintf(error_buffer, BUFFER_SIZE,
-                 "ERROR %sAucun défi en attente de ce joueur%s\n", RED_TEXT,
-                 RESET_COLOR);
-        write(socket, error_buffer, strlen(error_buffer));
-        continue;
-      }
-
-      // Créer la partie et initialiser le jeu
-      pthread_mutex_lock(&clients_mutex);
-      pthread_mutex_lock(&games_mutex);
-
-      int challenger_socket = -1;
-      for (int i = 0; i < nb_clients; i++) {
-        if (strcmp(clients[i].pseudo, challenger) == 0) {
-          challenger_socket = clients[i].socket;
-          clients[i].is_playing = 1;
-          clients[i].game_id = nb_games;
-          break;
-        }
-      }
-
-      for (int i = 0; i < nb_clients; i++) {
-        if (clients[i].socket == socket) {
-          clients[i].is_playing = 1;
-          clients[i].game_id = nb_games;
-          break;
-        }
-      }
-
-      Game *game = &games[nb_games++];
-      init_game(game, challenger, accepter_pseudo, challenger_socket, socket);
-
-      pthread_mutex_unlock(&games_mutex);
-      pthread_mutex_unlock(&clients_mutex);
-
-      // Supprimer le défi des défis en attente
-      remove_challenge(challenger, accepter_pseudo);
-
-      // Diffuser l'état initial du jeu
-      broadcast_game_state(game);
+      accepter_partie(socket, buffer);
     } else if (strncmp(buffer, "OBSERVE", 7) == 0) {
-      int game_id;
-      sscanf(buffer, "OBSERVE %d", &game_id);
-
-      // Vérifier si le joueur est déjà en partie
-      pthread_mutex_lock(&clients_mutex);
-      int is_playing = 0;
-      for (int i = 0; i < nb_clients; i++) {
-        if (clients[i].socket == socket && clients[i].is_playing) {
-          is_playing = 1;
-          break;
-        }
-      }
-      pthread_mutex_unlock(&clients_mutex);
-
-      if (is_playing) {
-        char error_buffer[BUFFER_SIZE];
-        snprintf(error_buffer, BUFFER_SIZE,
-                 "ERROR %sVous ne pouvez pas observer une partie pendant que "
-                 "vous jouez%s\n",
-                 RED_TEXT, RESET_COLOR);
-        write(socket, error_buffer, strlen(error_buffer));
-        continue;
-      }
-
-      pthread_mutex_lock(&games_mutex);
-      if (game_id >= 0 && game_id < nb_games && !games[game_id].jeu.fini) {
-        // Trouver les clients correspondant aux joueurs de la partie
-        pthread_mutex_lock(&clients_mutex);
-        Client *player1 = NULL;
-        Client *player2 = NULL;
-        Client *observer = NULL;
-
-        // Trouver l'observateur et les joueurs
-        for (int i = 0; i < nb_clients; i++) {
-          if (clients[i].socket == socket) {
-            observer = &clients[i];
-          }
-          if (strcmp(clients[i].pseudo, games[game_id].player1) == 0) {
-            player1 = &clients[i];
-          }
-          if (strcmp(clients[i].pseudo, games[game_id].player2) == 0) {
-            player2 = &clients[i];
-          }
-        }
-
-        int can_observe = 1;
-        if (player1 && player1->is_private) {
-          // Vérifier si l'observateur est dans la liste des observateurs
-          // privés du joueur 1
-          int found = 0;
-          for (int i = 0; i < player1->nb_private_observers; i++) {
-            if (strcmp(player1->private_observers[i], observer->pseudo) == 0) {
-              found = 1;
-              break;
-            }
-          }
-          if (!found) {
-            can_observe = 0;
-          }
-        }
-
-        if (can_observe && player2 && player2->is_private) {
-          // Vérifier si l'observateur est dans la liste des observateurs privés
-          // du joueur 2
-          int found = 0;
-          for (int i = 0; i < player2->nb_private_observers; i++) {
-            if (strcmp(player2->private_observers[i], observer->pseudo) == 0) {
-              found = 1;
-              break;
-            }
-          }
-          if (!found) {
-            can_observe = 0;
-          }
-        }
-
-        if (can_observe) {
-          games[game_id].observers[games[game_id].nb_observers++] = socket;
-          send_game_state_to_observer(&games[game_id], socket);
-          char success_msg[BUFFER_SIZE];
-          snprintf(success_msg, BUFFER_SIZE,
-                   "OBSERVE_OK %sVous observez maintenant la partie %d%s\n",
-                   GREEN_TEXT, game_id, RESET_COLOR);
-          write(socket, success_msg, strlen(success_msg));
-        } else {
-          char error_msg[BUFFER_SIZE];
-          snprintf(error_msg, BUFFER_SIZE,
-                   "ERROR %sVous n'avez pas la permission d'observer cette "
-                   "partie privée%s\n",
-                   RED_TEXT, RESET_COLOR);
-          write(socket, error_msg, strlen(error_msg));
-        }
-
-        pthread_mutex_unlock(&clients_mutex);
-      }
-      pthread_mutex_unlock(&games_mutex);
+      observer_partie(socket, buffer);
     } else if (strncmp(buffer, "MESSAGE", 7) == 0) {
-      send_message(socket, buffer);
+      envoyer_message(socket, buffer);
       memset(buffer, 0, BUFFER_SIZE);
     } else if (strncmp(buffer, "MOVE", 4) == 0) {
       int move;
@@ -994,7 +997,7 @@ void *handle_client(void *arg) {
         if (player_num == game->jeu.joueurCourant) {
           // Jouer le coup avec awale_v2.c
           if (jouer_coup(&game->jeu, move)) {
-            broadcast_game_state(game);
+            diffuser_etat_partie(game);
           }
         }
         pthread_mutex_unlock(&games_mutex);
@@ -1024,7 +1027,7 @@ void *handle_client(void *arg) {
         }
 
         game->jeu.fini = 1;
-        broadcast_game_state(game);
+        diffuser_etat_partie(game);
 
         // Mettre à jour le statut des joueurs
         pthread_mutex_lock(&clients_mutex);
@@ -1041,7 +1044,7 @@ void *handle_client(void *arg) {
     } else if (strncmp(buffer, "ADD_HISTORY", 11) == 0) {
       ajouter_historique(buffer);
     } else if (strncmp(buffer, "HISTORY", 7) == 0) {
-      send_history(socket);
+      envoyer_historique_parties(socket);
     }
   }
 
@@ -1102,7 +1105,7 @@ int main(int argc, char **argv) {
         accept(server_socket, (struct sockaddr *)&client_addr, &client_len);
 
     pthread_t thread;
-    pthread_create(&thread, NULL, handle_client, client_socket);
+    pthread_create(&thread, NULL, gerer_client, client_socket);
     pthread_detach(thread);
   }
 
