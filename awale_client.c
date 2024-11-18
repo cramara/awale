@@ -144,7 +144,10 @@ void *recevoir_messages(void *arg) {
       if (donnees->jeu.fini) {
         if (donnees->jeu.gagnant == donnees->numero_joueur) {
           printf("\nFélicitations ! Vous avez gagné !\n");
-          envoyer_historique_partie(donnees->socket, donnees);
+          // N'ajouter à l'historique que si ce n'est pas un forfait
+          if (donnees->jeu.scoreJ1 != 0 && donnees->jeu.scoreJ2 != 0) {
+            envoyer_historique_partie(donnees->socket, donnees);
+          }
         } else if (donnees->jeu.gagnant > 0) {
           printf("\nVous avez perdu.\n");
         } else {
@@ -290,6 +293,13 @@ void gerer_consultation_bio(int socket_fd, char *buffer) {
 }
 
 void gerer_coup(int socket_fd, char *buffer, DonneesClient *donnees) {
+  // Vérifier d'abord si c'est un forfait
+  if (strcmp(buffer, "/forfeit") == 0 || strcmp(buffer, "/ff") == 0) {
+    envoyer_commande_simple(socket_fd, "FORFEIT");
+    printf("Vous avez abandonné la partie.\n");
+    return;
+  }
+
   int coup = buffer[0] - '0';
   if (coup_valide(&donnees->jeu, coup)) {
     snprintf(buffer, TAILLE_BUFFER, "MOVE %d", coup);
