@@ -31,34 +31,139 @@ Pour lancer le client :
 ```
 Exemple : `./awale_client 127.0.0.1 8080`
 
-## Comment jouer
+## Commandes disponibles et leur utilisation
 
-### Connexion
-1. Lancez le client
-2. Entrez votre pseudo lorsque demandé
+### Gestion du profil
+1. **Créer/modifier votre biographie**
+```bash
+/create-bio <texte>
+```
+Exemple : `/create-bio J'adore jouer à l'Awalé !`
 
-### Commandes disponibles
-- `/help` - Affiche la liste des commandes
-- `/list` - Affiche la liste des joueurs disponibles
-- `/games` - Affiche la liste des parties en cours
-- `/challenge <pseudo>` ou `/c <pseudo>` - Défie un joueur
-- `/accept <pseudo>` ou `/a <pseudo>` - Accepte un défi
-- `/observe <id_partie>` - Observe une partie en cours
-- `/message <pseudo> <message>` - Envoie un message à un joueur
-- `/message all <message>` - Envoie un message à tous les joueurs
-- `/quit` - Quitte le jeu
+2. **Consulter la bio d'un joueur**
+```bash
+/check-bio <pseudo>
+```
+Exemple : `/check-bio Alice`
 
-### Règles du jeu
-1. Le plateau contient 12 trous (6 par joueur) avec 4 graines dans chaque trou au début
-2. Chaque joueur joue à son tour en choisissant un trou de son camp (1-6)
-3. Les graines sont distribuées une par une dans les trous suivants dans le sens anti-horaire
-4. Si la dernière graine distribuée fait que le trou contient 2 ou 3 graines, le joueur capture ces graines
-5. Le but est de capturer plus de graines que l'adversaire
-6. La partie se termine quand :
-   - Un joueur a capturé 25 graines ou plus
-   - Un joueur ne peut plus jouer (famine)
+### Gestion de la visibilité des parties
 
-### Interface du plateau
+3. **Ajouter un observateur privé**
+```bash
+/add-private-observer <pseudo>
+```
+Exemple : `/add-private-observer Bob`
+- Permet à Bob d'observer vos parties même en mode privé
+
+4. **Retirer un observateur privé**
+```bash
+/remove-private-observer <pseudo>
+```
+Exemple : `/remove-private-observer Bob`
+- Retire à Bob le droit d'observer vos parties privées
+
+5. **Lister vos observateurs privés**
+```bash
+/list-private-observers
+```
+
+6. **Changer le mode de visibilité**
+```bash
+/public    # Tout le monde peut observer vos parties
+/private   # Seuls vos observateurs privés peuvent voir vos parties
+```
+
+### Commandes de jeu
+
+7. **Voir les joueurs disponibles**
+```bash
+/list
+```
+
+8. **Voir les parties en cours**
+```bash
+/games
+```
+
+9. **Défier un joueur**
+```bash
+/challenge <pseudo>
+```
+ou
+```bash
+/c <pseudo>
+```
+Exemple : `/challenge Alice`
+
+10. **Accepter un défi**
+```bash
+/accept <pseudo>
+```
+ou
+```bash
+/a <pseudo>
+```
+Exemple : `/accept Bob`
+
+11. **Observer une partie**
+```bash
+/observe <id_partie>
+```
+Exemple : `/observe 1`
+- L'ID de la partie est visible dans la liste des parties (/games)
+- En mode privé, seuls les observateurs autorisés peuvent regarder
+
+12. **Abandonner une partie**
+```bash
+/forfeit
+```
+ou
+```bash
+/ff
+```
+
+### Communication
+
+13. **Envoyer un message privé**
+```bash
+/message <pseudo> <message>
+```
+Exemple : `/message Alice Bonne partie !`
+
+14. **Envoyer un message à tous**
+```bash
+/message all <message>
+```
+Exemple : `/message all Qui veut faire une partie ?`
+
+### Autres commandes
+
+15. **Voir l'historique des parties**
+```bash
+/history
+```
+- Affiche les résultats des parties terminées avec les scores
+
+16. **Aide**
+```bash
+/help
+```
+- Affiche la liste des commandes disponibles
+
+17. **Quitter**
+```bash
+/quit
+```
+- Quitte le jeu (abandonne automatiquement si une partie est en cours)
+
+### Pendant une partie
+
+Pour jouer un coup, entrez simplement le numéro de la case (1-6) que vous souhaitez jouer :
+```bash
+3
+```
+
+## Interface du plateau
 ```
    -------------------------------
    | 11 | 10 |  9 |  8 |  7 |  6 | (Adversaire)
@@ -68,12 +173,39 @@ Exemple : `./awale_client 127.0.0.1 8080`
       1    2    3    4    5    6
 ```
 
-### Pour jouer un coup
-- Pendant votre tour, entrez un nombre de 1 à 6 correspondant au trou que vous voulez jouer
-- Le jeu affichera automatiquement le plateau mis à jour après chaque coup
-
-## Notes
-- Les trous de votre camp sont affichés en vert
+## Notes importantes
+- Les cases de votre camp sont affichées en vert
 - Le plateau s'adapte à la perspective de chaque joueur
-- Les observateurs peuvent voir la partie mais ne peuvent pas jouer
-- La partie se termine automatiquement quand un joueur gagne
+- Les parties peuvent être publiques ou privées
+- Les observateurs doivent avoir la permission pour regarder les parties privées
+- L'historique conserve uniquement les parties terminées normalement (pas les forfaits)
+- Les joueurs en partie ne peuvent pas observer d'autres parties
+- Les messages peuvent être envoyés à un joueur spécifique ou à tous les joueurs
+- Le mode privé nécessite d'avoir préalablement ajouté des observateurs
+
+## Exemple de session de jeu
+
+1. Se connecter et créer son profil :
+```bash
+/create-bio Joueur passionné d'Awalé
+/add-private-observer Amy
+/private
+```
+
+2. Commencer une partie :
+```bash
+/list
+/challenge Bob
+# Attendre que Bob accepte avec /accept <votre_pseudo>
+```
+
+3. Pendant la partie :
+- Jouer avec les numéros 1-6
+- Utiliser /message pour communiquer
+- /forfeit pour abandonner si nécessaire
+
+4. Après la partie :
+```bash
+/history    # Pour voir les résultats
+/games      # Pour voir d'autres parties à observer
+```
