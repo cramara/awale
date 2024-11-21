@@ -9,11 +9,14 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <math.h>
+#include <sys/signalfd.h>
 
-#define TAILLE_BUFFER 1024
-#define TAILLE_MAX_BIO 200
+#define TAILLE_BUFFER 2048
+#define TAILLE_MAX_BIO 1024
 #define TAILLE_MAX_PSEUDO 50
 #define MAX_PARTIES 25
+#define MAX_MESSAGE_LENGTH (TAILLE_BUFFER - TAILLE_MAX_PSEUDO - 20)
 #define RESET_COLOR "\033[0m"
 #define GREEN_TEXT "\033[32m"
 #define RED_TEXT "\033[31m"
@@ -27,6 +30,7 @@ typedef struct {
 
 static DonneesClient *donnees_globales = NULL;
 static int descripteur_socket_global = -1;
+static char buffer_defi_recu[TAILLE_MAX_PSEUDO] = "";
 
 void afficher_aide() {
   printf("\n%sCommandes disponibles:%s\n", GREEN_TEXT, RESET_COLOR);
@@ -39,7 +43,8 @@ void afficher_aide() {
          "parties)");
   printf("/private - passer en mode privé (seuls vos observateurs privés "
          "peuvent regarder vos parties)\n");
-  printf("/list - Liste des joueurs disponibles\n");
+  printf("/list - Liste des joueurs %sdisponibles%s et %sindisponibles%s\n",
+         GREEN_TEXT, RESET_COLOR, RED_TEXT, RESET_COLOR );
   printf("/games - Liste des parties en cours\n");
   printf("/challenge <pseudo> - Défier un joueur\n");
   printf("/observe <id_partie> - Observer une partie\n");
@@ -114,6 +119,8 @@ void *recevoir_messages(void *arg) {
 
     char *pos_etat_jeu = strstr(buffer, "GAMESTATE");
     if (pos_etat_jeu != NULL) {
+      // Vider le buffer des défis reçus car une partie commence
+      buffer_defi_recu[0] = '\0';
       if (donnees->numero_joueur == 0) {
         char joueur1[TAILLE_MAX_PSEUDO];
         char joueur2[TAILLE_MAX_PSEUDO];
@@ -165,6 +172,9 @@ void *recevoir_messages(void *arg) {
     } else if (strncmp(buffer, "CHALLENGE_FROM", 13) == 0) {
       char adversaire[TAILLE_MAX_PSEUDO];
       sscanf(buffer, "CHALLENGE_FROM %s", adversaire);
+      // Sauvegarder le pseudo du challenger
+      strncpy(buffer_defi_recu, adversaire, TAILLE_MAX_PSEUDO - 1);
+      buffer_defi_recu[TAILLE_MAX_PSEUDO - 1] = '\0';
       printf("\nDéfi reçu de %s! Tapez '/accept %s' pour accepter\n",
              adversaire, adversaire);
     } else if (strncmp(buffer, "MESSAGE", 7) == 0) {
@@ -200,7 +210,15 @@ void gerer_defi(int socket_fd, char *buffer) {
   char adversaire[TAILLE_MAX_PSEUDO];
   if (sscanf(buffer, "/challenge %s", adversaire) == 1 ||
       sscanf(buffer, "/c %s", adversaire) == 1) {
-    snprintf(buffer, TAILLE_BUFFER, "CHALLENGE %s", adversaire);
+    // Vérifier si on a reçu un défi de cet adversaire
+    if (strstr(buffer_defi_recu, adversaire) != NULL) {
+      // Si oui, on accepte automatiquement le défi
+      snprintf(buffer, TAILLE_BUFFER, "ACCEPT %s", adversaire);
+      printf("Défi automatiquement accepté car %s vous avait déjà défié!\n", adversaire);
+    } else {
+      // Sinon, on envoie un nouveau défi
+      snprintf(buffer, TAILLE_BUFFER, "CHALLENGE %s", adversaire);
+    }
     envoyer_commande_simple(socket_fd, buffer);
   } else {
     printf("Usage: /challenge <pseudo>\n");
@@ -231,15 +249,21 @@ void gerer_observation(int socket_fd, char *buffer) {
 
 void gerer_message(int socket_fd, char *buffer) {
   char pseudo[TAILLE_MAX_PSEUDO];
-  char message[TAILLE_BUFFER];
+  char message[TAILLE_BUFFER - TAILLE_MAX_PSEUDO - 10]; // Réserver de l'espace pour "MESSAGE" et les espaces
 
   if (sscanf(buffer, "/message %s %[^\n]", pseudo, message) == 2) {
-    size_t message_len = strlen(message);
-    if (message_len > TAILLE_BUFFER - 50) {
-      message[TAILLE_BUFFER - 50] = '\0';
+    // Vérifier la taille du message
+    if (strlen(message) >= sizeof(message)) {
+      printf("Message trop long, il sera tronqué\n");
+      message[sizeof(message) - 1] = '\0';
     }
-    snprintf(buffer, TAILLE_BUFFER, "MESSAGE %s %s", pseudo, message);
-    envoyer_commande_simple(socket_fd, buffer);
+    
+    // Construire le message avec une taille garantie
+    char formatted_message[TAILLE_BUFFER];
+    snprintf(formatted_message, sizeof(formatted_message), "MESSAGE %s %s", 
+            pseudo, message);
+    
+    envoyer_commande_simple(socket_fd, formatted_message);
   } else {
     printf("Usage: /message <pseudo> <message>\n");
   }
@@ -320,16 +344,16 @@ void cleanup() {
   // Libération des ressources si nécessaire
 }
 
-// Gestionnaire de signal
+// Gestionnaire de signal simplifié
 void gestionnaire_signal(int signum) {
-  printf("\nSignal %d reçu. Nettoyage et fermeture...\n", signum);
-  if (descripteur_socket_global != -1) {
-    close(descripteur_socket_global);
-  }
-  if (donnees_globales != NULL) {
-    free(donnees_globales);
-  }
-  exit(signum);
+    printf("\nSignal %d reçu. Nettoyage et fermeture...\n", signum);
+    if (descripteur_socket_global != -1) {
+        close(descripteur_socket_global);
+    }
+    if (donnees_globales != NULL) {
+        free(donnees_globales);
+    }
+    exit(signum);
 }
 
 int main(int argc, char **argv) {
@@ -411,34 +435,11 @@ int main(int argc, char **argv) {
   pthread_t thread_reception;
   pthread_create(&thread_reception, NULL, recevoir_messages, donnees);
 
-  // Configuration du gestionnaire de signaux
-  struct sigaction sa;
-  sa.sa_handler = gestionnaire_signal;
-  sigemptyset(&sa.sa_mask);
-  sa.sa_flags = 0;
-
-  // Intercepter tous les signaux qui peuvent causer un arrêt
-  sigaction(SIGABRT, &sa, NULL); // Abort
-  sigaction(SIGFPE, &sa, NULL);  // Floating point exception
-  sigaction(SIGILL, &sa, NULL);  // Illegal instruction
-  sigaction(SIGINT, &sa, NULL);  // Interrupt (Ctrl+C)
-  sigaction(SIGSEGV, &sa, NULL); // Segmentation fault
-  sigaction(SIGTERM, &sa, NULL); // Termination
-  sigaction(SIGQUIT, &sa, NULL); // Quit
-  sigaction(SIGTSTP, &sa, NULL); // Stop typed at terminal (Ctrl+Z)
-  sigaction(SIGTTIN, &sa, NULL); // Terminal input
-  sigaction(SIGTTOU, &sa, NULL); // Terminal output
-  sigaction(SIGUSR1, &sa, NULL); // User-defined 1
-  sigaction(SIGUSR2, &sa, NULL); // User-defined 2
-  sigaction(SIGPIPE, &sa, NULL); // Broken pipe
-  sigaction(SIGALRM, &sa, NULL); // Alarm clock
-  sigaction(SIGCHLD, &sa, NULL); // Child status changed
-  sigaction(SIGCONT, &sa, NULL); // Continue if stopped
-  sigaction(SIGHUP, &sa, NULL);  // Hangup
-  sigaction(SIGBUS, &sa, NULL);  // Bus error
-
-  // Ignorer SIGPIPE pour éviter l'arrêt sur broken pipe
-  signal(SIGPIPE, SIG_IGN);
+  // Configuration des signaux
+  signal(SIGINT, gestionnaire_signal);
+  signal(SIGTERM, gestionnaire_signal);
+  signal(SIGQUIT, gestionnaire_signal);
+  signal(SIGPIPE, SIG_IGN); // Ignorer SIGPIPE
 
   // Sauvegarder les références pour le gestionnaire de signaux
   descripteur_socket_global = descripteur_socket;

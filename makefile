@@ -6,7 +6,7 @@ CLIENT = awale_client
 CC = gcc
 
 # Options de compilation
-CFLAGS = -Wall -Wextra -std=c11 -pthread -g
+CFLAGS = -Wall -Wextra -std=c11 -pthread -g 
 
 # Fichiers sources
 SERVER_SRC = awale_server.c
@@ -21,11 +21,11 @@ all: $(SERVER) $(CLIENT)
 
 # Règle pour créer le serveur
 $(SERVER): $(SERVER_SRC) $(COMMON_SRC) $(HEADERS)
-	$(CC) $(CFLAGS) -o $@ $(SERVER_SRC) -g 
+	$(CC) $(CFLAGS) -o $@ $(SERVER_SRC) -lm
 
 # Règle pour créer le client
 $(CLIENT): $(CLIENT_SRC) $(COMMON_SRC) $(HEADERS)
-	$(CC) $(CFLAGS) -o $@ $(CLIENT_SRC) -g 
+	$(CC) $(CFLAGS) -o $@ $(CLIENT_SRC) -lm
 
 # Règle pour nettoyer les fichiers générés
 clean:

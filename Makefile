@@ -1,0 +1,1 @@
+CFLAGS += -D_GNU_SOURCE -Wall -Wextra 

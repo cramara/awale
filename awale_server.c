@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+#include <math.h>  // Pour pow()
 
 #define MAX_CLIENTS 50
 #define MAX_GAMES 25
@@ -21,6 +22,8 @@
 #define RED_TEXT "\033[31m"
 #define MAX_HISTORIQUE 100
 #define MAX_PRIVATE_OBSERVERS 10
+#define ELO_INITIAL 1200
+#define K_FACTOR 32
 
 typedef struct {
   int socket;
@@ -32,6 +35,7 @@ typedef struct {
   int nb_private_observers;
   int is_private; // 1 si le client est privé, 0 sinon (si privé, que les
                   // observateurs de la liste privée peuvent voir la partie)
+  int elo;  // Nouveau champ pour le score ELO
 } Client;
 
 typedef struct {
@@ -73,6 +77,8 @@ pthread_mutex_t games_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t historique_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t challenges_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+void mettre_a_jour_elo(const char *gagnant, const char *perdant);
+
 void diffuser_etat_partie(Game *game) {
   // Buffer pour stocker l'état complet
   char full_state[BUFFER_SIZE];
@@ -101,20 +107,39 @@ void diffuser_etat_partie(Game *game) {
   memset(full_state, 0, BUFFER_SIZE);
 }
 
-void envoyer_joueurs_libres(int socket) {
-  char buffer[BUFFER_SIZE] = "PLAYERS";
-  pthread_mutex_lock(&clients_mutex);
-  for (int i = 0; i < nb_clients; i++) {
-    if (!clients[i].is_playing) {
-      strcat(buffer, " ");
-      strcat(buffer, clients[i].pseudo);
-    }
-  }
-  pthread_mutex_unlock(&clients_mutex);
-  write(socket, buffer, strlen(buffer));
+void envoyer_liste_joueurs(int socket) {
+    char buffer[BUFFER_SIZE] = "PLAYERS";
+    pthread_mutex_lock(&clients_mutex);
 
-  // Nettoyer le buffer
-  memset(buffer, 0, BUFFER_SIZE);
+    char presentation[200];
+    snprintf(presentation, 200, "Liste des joueurs %sdisponibles%s et %sindisponibles%s\n\n",
+         GREEN_TEXT, RESET_COLOR, RED_TEXT, RESET_COLOR );
+    strcat(buffer,presentation);
+    
+    // Parcourir tous les joueurs
+    for (int i = 0; i < nb_clients; i++) {
+        char player_info[200];
+        if (clients[i].is_playing) {
+            // Joueur en partie - en rouge
+            snprintf(player_info, 200, " %s%s(ELO: %d)%s", 
+                    RED_TEXT, 
+                    clients[i].pseudo, 
+                    clients[i].elo,
+                    RESET_COLOR);
+        } else {
+            // Joueur libre - en vert
+            snprintf(player_info, 200, " %s%s(ELO: %d)%s", 
+                    GREEN_TEXT, 
+                    clients[i].pseudo, 
+                    clients[i].elo,
+                    RESET_COLOR);
+        }
+        strcat(buffer, player_info);
+    }
+    
+    pthread_mutex_unlock(&clients_mutex);
+    strcat(buffer, "\n");
+    write(socket, buffer, strlen(buffer));
 }
 
 void ajouter_historique(const char *buffer) {
@@ -210,28 +235,33 @@ void changer_bio(int socket, const char *bio_text) {
 }
 
 void regarder_bio(int socket, const char *target_pseudo) {
-  pthread_mutex_lock(&clients_mutex);
-  for (int i = 0; i < nb_clients; i++) {
-    if (strcmp(clients[i].pseudo, target_pseudo) == 0) {
-      char response[BUFFER_SIZE];
-      if (strlen(clients[i].bio) == 0) {
-        snprintf(response, BUFFER_SIZE, "BIO %s n'a pas encore de bio.\n",
-                 target_pseudo);
-      } else {
-        snprintf(response, BUFFER_SIZE, "BIO Bio de %s%s%s: %s\n", GREEN_TEXT,
-                 target_pseudo, RESET_COLOR, clients[i].bio);
-      }
-      write(socket, response, strlen(response));
-      pthread_mutex_unlock(&clients_mutex);
-      return;
+    pthread_mutex_lock(&clients_mutex);
+    for (int i = 0; i < nb_clients; i++) {
+        if (strcmp(clients[i].pseudo, target_pseudo) == 0) {
+            char response[BUFFER_SIZE];
+            if (strlen(clients[i].bio) == 0) {
+                snprintf(response, BUFFER_SIZE, "BIO %s n'a pas encore de bio.\n",
+                        target_pseudo);
+            } else {
+                // Limiter la taille de la bio pour éviter la troncature
+                char bio_tronquee[BUFFER_SIZE - 100]; // Réserver de l'espace pour le reste du message
+                strncpy(bio_tronquee, clients[i].bio, sizeof(bio_tronquee) - 1);
+                bio_tronquee[sizeof(bio_tronquee) - 1] = '\0';
+                
+                snprintf(response, BUFFER_SIZE, "BIO Bio de %s%s%s: %s\n", 
+                        GREEN_TEXT, target_pseudo, RESET_COLOR, bio_tronquee);
+            }
+            write(socket, response, strlen(response));
+            pthread_mutex_unlock(&clients_mutex);
+            return;
+        }
     }
-  }
-  pthread_mutex_unlock(&clients_mutex);
+    pthread_mutex_unlock(&clients_mutex);
 
-  char error_msg[BUFFER_SIZE];
-  snprintf(error_msg, BUFFER_SIZE, "ERROR %sJoueur %s non trouvé%s\n", RED_TEXT,
-           target_pseudo, RESET_COLOR);
-  write(socket, error_msg, strlen(error_msg));
+    char error_msg[BUFFER_SIZE];
+    snprintf(error_msg, BUFFER_SIZE, "ERROR %sJoueur %s non trouvé%s\n", 
+             RED_TEXT, target_pseudo, RESET_COLOR);
+    write(socket, error_msg, strlen(error_msg));
 }
 
 void ajouter_observateur_prive(int socket, const char *target_pseudo) {
@@ -448,71 +478,56 @@ void changer_mode_visibilite(int socket, int mode) {
 }
 
 void envoyer_message(int socket, char *buffer) {
-  // Format du buffer : "MESSAGE <destinataire> <message>"
-  char destinataire[MAX_PSEUDO_LENGTH];
-  char message[BUFFER_SIZE];
-  char expediteur[MAX_PSEUDO_LENGTH];
+    char destinataire[MAX_PSEUDO_LENGTH];
+    char message[BUFFER_SIZE - MAX_PSEUDO_LENGTH - 100]; // Réserver de l'espace pour le formatage
+    char expediteur[MAX_PSEUDO_LENGTH];
 
-  // Extraire le destinataire et le message
-  if (sscanf(buffer, "MESSAGE %s %[^\n]", destinataire, message) != 2) {
-    char error_buffer[BUFFER_SIZE];
-    snprintf(error_buffer, BUFFER_SIZE,
-             "ERROR %sFormat de message incorrect%s\n", RED_TEXT, RESET_COLOR);
-    write(socket, error_buffer, strlen(error_buffer));
-    return;
-  }
-
-  // Trouver le pseudo de l'expéditeur
-  pthread_mutex_lock(&clients_mutex);
-  for (int i = 0; i < nb_clients; i++) {
-    if (clients[i].socket == socket) {
-      strcpy(expediteur, clients[i].pseudo);
-      break;
+    // Extraire le destinataire et le message
+    if (sscanf(buffer, "MESSAGE %s %[^\n]", destinataire, message) != 2) {
+        char error_buffer[BUFFER_SIZE];
+        snprintf(error_buffer, BUFFER_SIZE,
+                "ERROR %sFormat de message incorrect%s\n", RED_TEXT, RESET_COLOR);
+        write(socket, error_buffer, strlen(error_buffer));
+        return;
     }
-  }
 
-  // Trouver le socket du destinataire et envoyer le message
-  int destinataireTrouve = 0;
-  // Vérifier si le message est pour tous les clients (destinataire = "all")
-  int allClients = (strcmp(destinataire, "all") == 0);
-
-  for (int i = 0; i < nb_clients; i++) {
-    if (strcmp(clients[i].pseudo, destinataire) == 0 || allClients) {
-
-      // Formater le message avec le pseudo de l'expéditeur
-      char formatted_message[BUFFER_SIZE];
-      size_t message_len = strlen(message);
-      if (message_len >
-          BUFFER_SIZE - 100) { // 100 pour la marge des autres éléments
-        message[BUFFER_SIZE - 100] = '\0'; // Tronquer le message si trop long
-      }
-      snprintf(formatted_message, BUFFER_SIZE,
-               "MESSAGE message de %s%s%s: %s\n", GREEN_TEXT, expediteur,
-               RESET_COLOR, message);
-
-      // Envoyer le message (ecrire le message chez le destinataire)
-      write(clients[i].socket, formatted_message, strlen(formatted_message));
-      destinataireTrouve = 1;
-
-      // On sort de la boucle si le destinataire est trouvé et que le message
-      // n'est pas pour tous
-      if (!allClients)
-        break;
+    // Trouver le pseudo de l'expéditeur
+    pthread_mutex_lock(&clients_mutex);
+    for (int i = 0; i < nb_clients; i++) {
+        if (clients[i].socket == socket) {
+            strncpy(expediteur, clients[i].pseudo, MAX_PSEUDO_LENGTH - 1);
+            expediteur[MAX_PSEUDO_LENGTH - 1] = '\0';
+            break;
+        }
     }
-  }
-  pthread_mutex_unlock(&clients_mutex);
 
-  // Si le destinataire n'est pas trouvé, envoyer une erreur à l'expéditeur
-  if (destinataireTrouve == 0) {
-    char error_msg[BUFFER_SIZE];
-    snprintf(error_msg, BUFFER_SIZE,
-             "MESSAGE %sErreur Le destinataire %s n'existe pas%s\n", RED_TEXT,
-             destinataire, RESET_COLOR);
-    write(socket, error_msg, strlen(error_msg));
-  }
+    // Vérifier si le message est pour tous les clients
+    int allClients = (strcmp(destinataire, "all") == 0);
+    int destinataireTrouve = 0;
 
-  // vider le buffer
-  memset(buffer, 0, BUFFER_SIZE);
+    for (int i = 0; i < nb_clients; i++) {
+        if (strcmp(clients[i].pseudo, destinataire) == 0 || allClients) {
+            char formatted_message[BUFFER_SIZE];
+            snprintf(formatted_message, BUFFER_SIZE,
+                    "MESSAGE message de %s%s%s: %.*s\n", 
+                    GREEN_TEXT, expediteur, RESET_COLOR,
+                    (int)(BUFFER_SIZE - 100), message); // Limiter la taille du message
+
+            write(clients[i].socket, formatted_message, strlen(formatted_message));
+            destinataireTrouve = 1;
+
+            if (!allClients) break;
+        }
+    }
+    pthread_mutex_unlock(&clients_mutex);
+
+    if (!destinataireTrouve) {
+        char error_msg[BUFFER_SIZE];
+        snprintf(error_msg, BUFFER_SIZE,
+                "MESSAGE %sErreur: Le destinataire %s n'existe pas%s\n", 
+                RED_TEXT, destinataire, RESET_COLOR);
+        write(socket, error_msg, strlen(error_msg));
+    }
 }
 
 void envoyer_parties_actives(int socket) {
@@ -712,6 +727,7 @@ void gerer_forfait(int socket) {
       game->jeu.scoreJ2 = 25; // Le joueur 2 gagne
       game->jeu.scoreJ1 = 0;  // Le joueur 1 perd
       game->jeu.gagnant = 2;
+      mettre_a_jour_elo(game->player2, game->player1);  // Mettre à jour les scores ELO
       // Ajouter à l'historique avec le bon gagnant
       char history_buffer[BUFFER_SIZE];
       snprintf(history_buffer, BUFFER_SIZE, "ADD_HISTORY %s %s %d %d",
@@ -722,6 +738,7 @@ void gerer_forfait(int socket) {
       game->jeu.scoreJ1 = 25; // Le joueur 1 gagne
       game->jeu.scoreJ2 = 0;  // Le joueur 2 perd
       game->jeu.gagnant = 1;
+      mettre_a_jour_elo(game->player1, game->player2);  // Mettre à jour les scores ELO
       // Ajouter à l'historique avec le bon gagnant
       char history_buffer[BUFFER_SIZE];
       snprintf(history_buffer, BUFFER_SIZE, "ADD_HISTORY %s %s %d %d",
@@ -789,76 +806,86 @@ void gerer_move(int socket, const char *buffer) {
   }
 }
 
-void defier(int socket, const char *buffer) {
-  char opponent[MAX_PSEUDO_LENGTH];
-  char challenger_pseudo[MAX_PSEUDO_LENGTH];
-  sscanf(buffer, "CHALLENGE %s", opponent);
-
-  pthread_mutex_lock(&clients_mutex);
-  int opponent_socket = -1;
-  int challenger_is_playing = 0;
-
-  // Trouver le pseudo du challenger
-  for (int i = 0; i < nb_clients; i++) {
-    if (clients[i].socket == socket) {
-      strncpy(challenger_pseudo, clients[i].pseudo, MAX_PSEUDO_LENGTH - 1);
-      challenger_pseudo[MAX_PSEUDO_LENGTH - 1] = '\0';
-      if (clients[i].is_playing) {
-        challenger_is_playing = 1;
-      }
-      break;
+void defier(int socket, char *buffer) {
+    char challenged_pseudo[MAX_PSEUDO_LENGTH];
+    if (sscanf(buffer, "CHALLENGE %s", challenged_pseudo) != 1) {
+        return;
     }
-  }
 
-  // Cas d'erreurs : pseudo identique, déjà en jeu, joueur introuvable
-  if (strcmp(challenger_pseudo, opponent) == 0) {
-    char error_buffer[BUFFER_SIZE];
-    snprintf(error_buffer, BUFFER_SIZE,
-             "ERROR %sVous ne pouvez pas vous défier vous-même%s\n", RED_TEXT,
-             RESET_COLOR);
-    write(socket, error_buffer, strlen(error_buffer));
-    pthread_mutex_unlock(&clients_mutex);
-    return;
-  }
+    pthread_mutex_lock(&clients_mutex);
+    pthread_mutex_lock(&challenges_mutex);
 
-  if (challenger_is_playing) {
-    char error_buffer[BUFFER_SIZE];
-    snprintf(error_buffer, BUFFER_SIZE,
-             "ERROR %sVous ne pouvez pas lancer de défi pendant une partie%s\n",
-             RED_TEXT, RESET_COLOR);
-    write(socket, error_buffer, strlen(error_buffer));
-    pthread_mutex_unlock(&clients_mutex);
-    return;
-  }
-
-  for (int i = 0; i < nb_clients; i++) {
-    if (strcmp(clients[i].pseudo, opponent) == 0) {
-      if (clients[i].is_playing) {
-        char error_buffer[BUFFER_SIZE];
-        snprintf(error_buffer, BUFFER_SIZE,
-                 "ERROR %sCe joueur est déjà en partie%s\n", RED_TEXT,
-                 RESET_COLOR);
-        write(socket, error_buffer, strlen(error_buffer));
-        opponent_socket = -2;
-      } else {
-        opponent_socket = clients[i].socket;
-      }
-      break;
+    // Trouver le challenger
+    char challenger_pseudo[MAX_PSEUDO_LENGTH];
+    int challenger_found = 0;
+    for (int i = 0; i < nb_clients; i++) {
+        if (clients[i].socket == socket) {
+            strncpy(challenger_pseudo, clients[i].pseudo, MAX_PSEUDO_LENGTH - 1);
+            challenger_pseudo[MAX_PSEUDO_LENGTH - 1] = '\0';
+            challenger_found = 1;
+            break;
+        }
     }
-  }
-  pthread_mutex_unlock(&clients_mutex);
 
-  if (opponent_socket == -1) {
-    char error_buffer[BUFFER_SIZE];
-    snprintf(error_buffer, BUFFER_SIZE, "ERROR %sJoueur non trouvé%s\n",
-             RED_TEXT, RESET_COLOR);
-    write(socket, error_buffer, strlen(error_buffer));
-  } else if (opponent_socket >= 0) {
-    ajouter_defi(challenger_pseudo, opponent);
-    char challenge[BUFFER_SIZE];
-    snprintf(challenge, BUFFER_SIZE, "CHALLENGE_FROM %s", challenger_pseudo);
-    write(opponent_socket, challenge, strlen(challenge));
-  }
+    if (!challenger_found) {
+        pthread_mutex_unlock(&challenges_mutex);
+        pthread_mutex_unlock(&clients_mutex);
+        return;
+    }
+
+    // Vérifier si le joueur défié existe et s'il est disponible
+    int challenged_found = 0;
+    int challenged_socket = -1;
+    int is_playing = 0;
+    
+    // Chercher le joueur défié
+    for (int i = 0; i < nb_clients; i++) {
+        if (strcmp(clients[i].pseudo, challenged_pseudo) == 0) {
+            challenged_found = 1;
+            challenged_socket = clients[i].socket;
+            is_playing = clients[i].is_playing;
+            break;
+        }
+    }
+
+    // Si le joueur n'est pas trouvé
+    if (!challenged_found) {
+        char error_msg[BUFFER_SIZE];
+        snprintf(error_msg, BUFFER_SIZE, "ERROR %sJoueur non trouvé%s\n", 
+                RED_TEXT, RESET_COLOR);
+        write(socket, error_msg, strlen(error_msg));
+        pthread_mutex_unlock(&challenges_mutex);
+        pthread_mutex_unlock(&clients_mutex);
+        return;
+    }
+
+    // Si le joueur est déjà en partie
+    if (is_playing) {
+        char error_msg[BUFFER_SIZE];
+        snprintf(error_msg, BUFFER_SIZE, "ERROR %s%s est déjà en partie%s\n", 
+                RED_TEXT, challenged_pseudo, RESET_COLOR);
+        write(socket, error_msg, strlen(error_msg));
+        pthread_mutex_unlock(&challenges_mutex);
+        pthread_mutex_unlock(&clients_mutex);
+        return;
+    }
+
+    // Envoyer le défi
+    char challenge_msg[BUFFER_SIZE];
+    snprintf(challenge_msg, BUFFER_SIZE, "CHALLENGE_FROM %s", challenger_pseudo);
+    write(challenged_socket, challenge_msg, strlen(challenge_msg));
+
+    // Ajouter le défi à la liste des défis en attente
+    if (nb_challenges < MAX_CLIENTS) {
+        strncpy(pending_challenges[nb_challenges].challenger, challenger_pseudo, MAX_PSEUDO_LENGTH - 1);
+        strncpy(pending_challenges[nb_challenges].challenged, challenged_pseudo, MAX_PSEUDO_LENGTH - 1);
+        pending_challenges[nb_challenges].challenger[MAX_PSEUDO_LENGTH - 1] = '\0';
+        pending_challenges[nb_challenges].challenged[MAX_PSEUDO_LENGTH - 1] = '\0';
+        nb_challenges++;
+    }
+
+    pthread_mutex_unlock(&challenges_mutex);
+    pthread_mutex_unlock(&clients_mutex);
 }
 
 void observer_partie(int socket, const char *buffer) {
@@ -983,6 +1010,39 @@ void observer_partie(int socket, const char *buffer) {
   pthread_mutex_unlock(&games_mutex);
 }
 
+void mettre_a_jour_elo(const char *gagnant, const char *perdant) {
+    pthread_mutex_lock(&clients_mutex);
+    
+    Client *winner = NULL;
+    Client *loser = NULL;
+    
+    // Trouver les deux joueurs
+    for (int i = 0; i < nb_clients; i++) {
+        if (strcmp(clients[i].pseudo, gagnant) == 0) {
+            winner = &clients[i];
+        }
+        if (strcmp(clients[i].pseudo, perdant) == 0) {
+            loser = &clients[i];
+        }
+    }
+    
+    if (winner && loser) {
+        // Calculer la probabilité de victoire attendue
+        double expected_winner = 1.0 / (1.0 + pow(10, (loser->elo - winner->elo) / 400.0));
+        double expected_loser = 1.0 / (1.0 + pow(10, (winner->elo - loser->elo) / 400.0));
+        
+        // Mettre à jour les scores ELO
+        winner->elo += (int)(K_FACTOR * (1 - expected_winner));
+        loser->elo += (int)(K_FACTOR * (0 - expected_loser));
+        
+        // S'assurer que les scores ne descendent pas en dessous de 0
+        if (winner->elo < 0) winner->elo = 0;
+        if (loser->elo < 0) loser->elo = 0;
+    }
+    
+    pthread_mutex_unlock(&clients_mutex);
+}
+
 void *gerer_client(void *arg) {
   int socket = *(int *)arg;
   char buffer[BUFFER_SIZE];
@@ -1034,6 +1094,7 @@ void *gerer_client(void *arg) {
     strncpy(client->pseudo, pseudo, MAX_PSEUDO_LENGTH - 1);
     client->pseudo[MAX_PSEUDO_LENGTH - 1] = '\0';
     client->nb_private_observers = 0;
+    client->elo = ELO_INITIAL;  // Initialiser le score ELO
 
     for (int i = 0; i < MAX_PRIVATE_OBSERVERS; i++) {
       client->private_observers[i][0] =
@@ -1061,7 +1122,7 @@ void *gerer_client(void *arg) {
     buffer[n] = 0;
 
     if (strncmp(buffer, "LIST", 4) == 0) {
-      envoyer_joueurs_libres(socket);
+      envoyer_liste_joueurs(socket);
     } else if (strncmp(buffer, "GAMES", 5) == 0) {
       envoyer_parties_actives(socket);
     } else if (strncmp(buffer, "ADD_PRIVATE_OBSERVER", 19) == 0) {
