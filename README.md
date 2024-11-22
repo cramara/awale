@@ -144,6 +144,7 @@ Exemple : `/message all Qui veut faire une partie ?`
 /history
 ```
 - Affiche les résultats des parties terminées avec les scores
+- L'historique des partie est persistant (gardé dans le fichier game_history.txt )
 
 16. **Aide**
 ```bash

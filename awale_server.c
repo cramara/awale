@@ -11,6 +11,8 @@
 #include <time.h>
 #include <unistd.h>
 #include <math.h>  // Pour pow()
+#include <errno.h>
+#include <signal.h>
 
 #define MAX_CLIENTS 50
 #define MAX_GAMES 25
@@ -24,6 +26,7 @@
 #define MAX_PRIVATE_OBSERVERS 10
 #define ELO_INITIAL 1200
 #define K_FACTOR 32
+#define HISTORY_FILE "game_history.txt"
 
 typedef struct {
   int socket;
@@ -1119,6 +1122,55 @@ void supprimer_defis_joueur(const char *pseudo) {
     pthread_mutex_unlock(&challenges_mutex);
 }
 
+void sauvegarder_historique(void) {
+    FILE *file = fopen(HISTORY_FILE, "w");
+    if (!file) {
+        fprintf(stderr, "Erreur lors de l'ouverture du fichier historique pour écriture: %s\n", 
+                strerror(errno));
+        return;
+    }
+
+    pthread_mutex_lock(&historique_mutex);
+    for (int i = 0; i < nb_historique; i++) {
+        fprintf(file, "%s %s %s %u %u\n", 
+                historique[i].player1,
+                historique[i].player2, 
+                historique[i].winner,
+                historique[i].score_player1,
+                historique[i].score_player2);
+    }
+    pthread_mutex_unlock(&historique_mutex);
+
+    fclose(file);
+}
+
+void charger_historique(void) {
+    FILE *file = fopen(HISTORY_FILE, "r");
+    if (!file) {
+        if (errno != ENOENT) { // Si l'erreur n'est pas "fichier non trouvé"
+            fprintf(stderr, "Erreur lors de l'ouverture du fichier historique pour lecture: %s\n", 
+                    strerror(errno));
+        }
+        return;
+    }
+
+    pthread_mutex_lock(&historique_mutex);
+    nb_historique = 0;
+
+    while (nb_historique < MAX_HISTORIQUE && 
+           fscanf(file, "%s %s %s %u %u", 
+                  historique[nb_historique].player1,
+                  historique[nb_historique].player2,
+                  historique[nb_historique].winner,
+                  &historique[nb_historique].score_player1,
+                  &historique[nb_historique].score_player2) == 5) {
+        nb_historique++;
+    }
+
+    pthread_mutex_unlock(&historique_mutex);
+    fclose(file);
+}
+
 void *gerer_client(void *arg) {
   int socket = *(int *)arg;
   char buffer[BUFFER_SIZE];
@@ -1272,45 +1324,59 @@ void *gerer_client(void *arg) {
   pthread_mutex_unlock(&games_mutex);
   pthread_mutex_unlock(&clients_mutex);
 
+  sauvegarder_historique();
+
   close(socket);
   return NULL;
 }
 
+void handle_sigint(int sig __attribute__((unused))) {
+    printf("\nFermeture du serveur...\n");
+    sauvegarder_historique();
+    exit(0);
+}
+
 int main(int argc, char **argv) {
-  if (argc != 2) {
-    printf("Usage: %s port\n", argv[0]);
-    return 1;
-  }
+    if (argc != 2) {
+        printf("Usage: %s port\n", argv[0]);
+        return 1;
+    }
 
-  srand(time(NULL));
+    // Ajouter le gestionnaire de signal pour SIGINT
+    signal(SIGINT, handle_sigint);
 
-  int server_socket = socket(AF_INET, SOCK_STREAM, 0);
-  struct sockaddr_in server_addr;
+    srand(time(NULL));
 
-  server_addr.sin_family = AF_INET;
-  server_addr.sin_addr.s_addr = INADDR_ANY;
-  server_addr.sin_port = htons(atoi(argv[1]));
+    // Charger l'historique au démarrage
+    charger_historique();
 
-  if (bind(server_socket, (struct sockaddr *)&server_addr,
-           sizeof(server_addr)) < 0) {
-    perror("Bind failed");
-    return 1;
-  }
+    int server_socket = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in server_addr;
 
-  listen(server_socket, 5);
-  printf("Server started on port %s\n", argv[1]);
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(atoi(argv[1]));
 
-  while (1) {
-    struct sockaddr_in client_addr;
-    socklen_t client_len = sizeof(client_addr);
-    int *client_socket = malloc(sizeof(int));
-    *client_socket =
-        accept(server_socket, (struct sockaddr *)&client_addr, &client_len);
+    if (bind(server_socket, (struct sockaddr *)&server_addr,
+             sizeof(server_addr)) < 0) {
+        perror("Bind failed");
+        return 1;
+    }
 
-    pthread_t thread;
-    pthread_create(&thread, NULL, gerer_client, client_socket);
-    pthread_detach(thread);
-  }
+    listen(server_socket, 5);
+    printf("Server started on port %s\n", argv[1]);
 
-  return 0;
+    while (1) {
+        struct sockaddr_in client_addr;
+        socklen_t client_len = sizeof(client_addr);
+        int *client_socket = malloc(sizeof(int));
+        *client_socket =
+            accept(server_socket, (struct sockaddr *)&client_addr, &client_len);
+
+        pthread_t thread;
+        pthread_create(&thread, NULL, gerer_client, client_socket);
+        pthread_detach(thread);
+    }
+
+    return 0;
 }
