@@ -2,6 +2,8 @@ awale_server
 awale_client
 */Contents
 vscode
+.vscode/
 
 .DS_Store
 .nfs*
+.vscode/settings.json
