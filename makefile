@@ -11,10 +11,10 @@ CFLAGS = -Wall -Wextra -std=c11 -pthread -g
 # Fichiers sources
 SERVER_SRC = awale_server.c
 CLIENT_SRC = awale_client.c
-COMMON_SRC = awale_v2.c
+COMMON_SRC = awale.c
 
 # Fichiers headers
-HEADERS = awale_v2.c
+HEADERS = awale.c
 
 # Règle par défaut
 all: $(SERVER) $(CLIENT)
