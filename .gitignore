@@ -4,3 +4,4 @@ awale_client
 vscode
 
 .DS_Store
+.nfs*
