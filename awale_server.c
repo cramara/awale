@@ -833,6 +833,18 @@ void defier(int socket, char *buffer) {
         return;
     }
 
+    // Vérifier si le joueur essaie de se défier lui-même
+    if (strcmp(challenger_pseudo, challenged_pseudo) == 0) {
+        char error_msg[BUFFER_SIZE];
+        snprintf(error_msg, BUFFER_SIZE, 
+                "ERROR %sVous ne pouvez pas vous défier vous-même%s\n", 
+                RED_TEXT, RESET_COLOR);
+        write(socket, error_msg, strlen(error_msg));
+        pthread_mutex_unlock(&challenges_mutex);
+        pthread_mutex_unlock(&clients_mutex);
+        return;
+    }
+
     // Vérifier si le joueur défié existe et s'il est disponible
     int challenged_found = 0;
     int challenged_socket = -1;
@@ -847,6 +859,8 @@ void defier(int socket, char *buffer) {
             break;
         }
     }
+
+    
 
     // Si le joueur n'est pas trouvé
     if (!challenged_found) {
