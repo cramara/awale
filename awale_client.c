@@ -55,6 +55,11 @@ void afficher_aide() {
   printf("1-6 - Jouer un coup (pendant une partie)\n\n");
 }
 
+// Fonction pour vérifier si un joueur est en partie
+int est_en_partie(DonneesClient *donnees) {
+    return donnees->numero_joueur == 1 || donnees->numero_joueur == 2;
+}
+
 typedef struct {
   char joueur1[TAILLE_MAX_PSEUDO];
   char joueur2[TAILLE_MAX_PSEUDO];
@@ -360,10 +365,7 @@ void gerer_coup(int socket_fd, char *buffer, DonneesClient *donnees) {
     }
 }
 
-// Fonction pour vérifier si un joueur est en partie
-int est_en_partie(DonneesClient *donnees) {
-    return donnees->numero_joueur == 1 || donnees->numero_joueur == 2;
-}
+
 
 // Fonction de nettoyage
 void cleanup() {
