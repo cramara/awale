@@ -121,6 +121,7 @@ ou
 ```bash
 /ff
 ```
+Quand on abandonne, l'autre joueur gagne automatiquement la partie.
 
 ### Communication
 
@@ -154,7 +155,7 @@ Exemple : `/message all Qui veut faire une partie ?`
 ```bash
 /quit
 ```
-- Quitte le jeu (abandonne automatiquement si une partie est en cours)
+- Quitte le jeu (abandonne automatiquement si une partie est en cours) pour ne pas bloquer l'adversaire dans une partie infinie
 
 ### Pendant une partie
 
