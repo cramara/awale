@@ -1,2 +1,0 @@
--gérer les croisement de demande de challenge
--faire en sorte que si on challenge une personne qui vient de nous envoyer un challenge, ça accepte le challenge

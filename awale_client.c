@@ -1,4 +1,4 @@
-#include "awale_v2.c"
+#include "awale.c"
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <pthread.h>
@@ -172,7 +172,7 @@ void *recevoir_messages(void *arg) {
                     } else {
                         donnees->numero_joueur = 3;
                     }
-                    printf("Numéro de joueur assigné: %d\n", donnees->numero_joueur);
+                    //printf("Numéro de joueur assigné: %d\n", donnees->numero_joueur);
                 }
             }
 
@@ -191,6 +191,8 @@ void *recevoir_messages(void *arg) {
                 } else {
                     printf("\nMatch nul !\n");
                 }
+            } else if (donnees->numero_joueur == 3) {
+                // Ne rien afficher pour les observateurs
             } else if (donnees->jeu.joueurCourant == donnees->numero_joueur) {
                 printf("\nC'est votre tour ! Choisissez un trou (1-6):\n");
             } else {
