@@ -649,17 +649,56 @@ void supprimer_defi(const char *challenger, const char *challenged) {
   pthread_mutex_unlock(&challenges_mutex);
 }
 
+// Nouvelle fonction pour retirer un joueur de toutes les parties qu'il observe
+void retirer_observateur_toutes_parties(int socket) {
+    pthread_mutex_lock(&games_mutex);
+    for (int i = 0; i < nb_games; i++) {
+        if (!games[i].jeu.fini) { // On ne vérifie que les parties en cours
+            retirer_observateur(&games[i], socket);
+        }
+    }
+    pthread_mutex_unlock(&games_mutex);
+}
+
 void accepter_partie(int socket, const char *buffer) {
   char challenger[MAX_PSEUDO_LENGTH];
   char accepter_pseudo[MAX_PSEUDO_LENGTH];
   sscanf(buffer, "ACCEPT %s", challenger);
 
   pthread_mutex_lock(&clients_mutex);
+  
+  // Trouver le joueur qui accepte et vérifier s'il est déjà en jeu
+  int is_playing = 0;
   for (int i = 0; i < nb_clients; i++) {
     if (clients[i].socket == socket) {
       strncpy(accepter_pseudo, clients[i].pseudo, MAX_PSEUDO_LENGTH - 1);
       accepter_pseudo[MAX_PSEUDO_LENGTH - 1] = '\0';
+      is_playing = clients[i].is_playing;
       break;
+    }
+  }
+
+  // Si le joueur est déjà en partie, on refuse l'acceptation
+  if (is_playing) {
+    char error_buffer[BUFFER_SIZE];
+    snprintf(error_buffer, BUFFER_SIZE,
+             "ERROR %sVous ne pouvez pas accepter de défi pendant une partie%s\n", 
+             RED_TEXT, RESET_COLOR);
+    write(socket, error_buffer, strlen(error_buffer));
+    pthread_mutex_unlock(&clients_mutex);
+    return;
+  }
+
+  // Vérifier si le challenger est en jeu
+  for (int i = 0; i < nb_clients; i++) {
+    if (strcmp(clients[i].pseudo, challenger) == 0 && clients[i].is_playing) {
+      char error_buffer[BUFFER_SIZE];
+      snprintf(error_buffer, BUFFER_SIZE,
+               "ERROR %s%s est déjà en partie%s\n", 
+               RED_TEXT, challenger, RESET_COLOR);
+      write(socket, error_buffer, strlen(error_buffer));
+      pthread_mutex_unlock(&clients_mutex);
+      return;
     }
   }
   pthread_mutex_unlock(&clients_mutex);
@@ -667,14 +706,17 @@ void accepter_partie(int socket, const char *buffer) {
   if (!defi_existe(challenger, accepter_pseudo)) {
     char error_buffer[BUFFER_SIZE];
     snprintf(error_buffer, BUFFER_SIZE,
-             "ERROR %sAucun défi en attente de ce joueur%s\n", RED_TEXT,
-             RESET_COLOR);
+             "ERROR %sAucun défi en attente de ce joueur%s\n", 
+             RED_TEXT, RESET_COLOR);
     write(socket, error_buffer, strlen(error_buffer));
     return;
   }
 
-  pthread_mutex_lock(&clients_mutex);
-  pthread_mutex_lock(&games_mutex);
+    // Retirer le joueur de toutes les parties qu'il observe
+    retirer_observateur_toutes_parties(socket);
+
+    pthread_mutex_lock(&clients_mutex);
+    pthread_mutex_lock(&games_mutex);
 
   int challenger_socket = -1;
   for (int i = 0; i < nb_clients; i++) {
@@ -1057,6 +1099,26 @@ void mettre_a_jour_elo(const char *gagnant, const char *perdant) {
     pthread_mutex_unlock(&clients_mutex);
 }
 
+// Nouvelle fonction pour supprimer tous les défis d'un joueur
+void supprimer_defis_joueur(const char *pseudo) {
+    pthread_mutex_lock(&challenges_mutex);
+    
+    // Parcourir tous les défis et supprimer ceux où le joueur est impliqué
+    for (int i = 0; i < nb_challenges; i++) {
+        if (strcmp(pending_challenges[i].challenger, pseudo) == 0 || 
+            strcmp(pending_challenges[i].challenged, pseudo) == 0) {
+            // Déplacer le dernier défi à cette position
+            if (i < nb_challenges - 1) {
+                pending_challenges[i] = pending_challenges[nb_challenges - 1];
+                i--; // Pour revérifier cette position au prochain tour
+            }
+            nb_challenges--;
+        }
+    }
+    
+    pthread_mutex_unlock(&challenges_mutex);
+}
+
 void *gerer_client(void *arg) {
   int socket = *(int *)arg;
   char buffer[BUFFER_SIZE];
@@ -1191,6 +1253,9 @@ void *gerer_client(void *arg) {
   pthread_mutex_lock(&games_mutex);
   for (int i = 0; i < nb_clients; i++) {
     if (clients[i].socket == socket) {
+      // Supprimer tous les défis du joueur
+      supprimer_defis_joueur(clients[i].pseudo);
+      
       // Si le client était en train d'observer une partie
       if (clients[i].game_id >= 0 && !clients[i].is_playing) {
         retirer_observateur(&games[clients[i].game_id], socket);
